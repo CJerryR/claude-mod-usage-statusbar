@@ -4,6 +4,12 @@ English | [简体中文](CHANGELOG.zh-CN.md)
 
 Every release is also on the [GitHub releases page](https://github.com/shiqkuangsan/claude-mod-usage-statusbar/releases). Update an installed copy with `claude plugin update usage-rings@claude-mod-usage-statusbar`, then `/reload-plugins` or a new session.
 
+## 0.8.0 (2026-11-04)
+
+- **Usage**: a new tile with tokens and cost for this chat, for this project folder and for today across every project, read from Claude Code's local session logs as Token Monitor counts them. The band now starts as one line; the `▾` at its end opens every tile's second line and two lines of detail: the project's, today's and the last 7 days' cost, and today's input, cache hit rate, output and share by model. `▴` closes it. `/rings hide usage` turns it off and stops the reading.
+- The mod now reads files: the session logs under `~/.claude/projects`, and, for a log over 4 MiB, through `tail`. It still makes no network calls.
+- The pace tick is now a notch just outside the ring, so it no longer reads as the end of the usage arc.
+
 ## 0.7.0 (2026-10-29)
 
 - The `/rings settings` pane names the installed version at its foot (`usage-rings 0.7.0`), or `usage-rings dev` for a working copy.

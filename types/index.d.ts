@@ -15,6 +15,19 @@ export type Snapshot = {
   startedAt?: number
 }
 export type Ledger = { day: string; dayUsd: number; month: string; monthUsd: number }
+// Tokens and cost from the session logs: partial when a log could not be read; the cost leaves
+// out responses from a model with no known price.
+export type UsageFigure = { tokens: number; usd: number; isPartial: boolean; hasUnpriced: boolean }
+// Today's tokens by kind, and by model, largest first.
+export type UsageMix = { input: number; output: number; read: number; write: number; models: { id: string; tokens: number }[] }
+export type UsageBook = {
+  session: UsageFigure
+  project: UsageFigure
+  today: UsageFigure
+  week: UsageFigure
+  mix: UsageMix
+  day: string
+}
 
 export type Mode = 'tiles' | 'minimal'
 export type Lang = 'en' | 'zh'
@@ -34,6 +47,7 @@ export type Part =
   | 'cache'
   | 'speed'
   | 'ttft'
+  | 'usage'
 export type Slot = 'ok' | 'warn' | 'danger' | 'pace' | 'track' | 'accent'
 export type Preset = 'default' | 'ocean' | 'grape' | 'mono'
 // Whose spend the today and month figures total: every session's, or this one's.
@@ -79,6 +93,10 @@ declare module 'claude-code' {
       turn: RingTurn
       // This session's own figures, from the ledger: what the session scope shows.
       own: Ledger | null
+      // This conversation's, its project folder's and today's usage, from the session logs.
+      usage: UsageBook | null
+      // Whether the band is opened: every tile's second line, and the usage detail below.
+      isUsageOpen: boolean
     }
   }
 }

@@ -13,10 +13,12 @@ A Claude Code mod that keeps a usage band above the prompt, drawn as ring gauges
 - **ctx**: how full the context is against the auto-compact window, as the session rail and `/context` measure it, and how many tokens are left before compaction; `/rings ctx model` measures against the model's whole window instead, with the token count
 - **5h** and **7d**: plan rate-limit windows, each with the time left until it resets
 - any per-model weekly window the API reports, under the model's name
-- **pace tick**: a mark across each window's ring where its time has got to, so an arc past the mark means usage runs ahead of time
+- **pace tick**: a notch just outside each window's ring where its time has got to, so an arc past the notch means usage runs ahead of time
 - **forecast** (off by default, `/rings show forecast`): when the window's average rate so far would use it up before it resets, the tile says `full ~1h57m` and the ring turns amber
 - **spend**: this session's whole cost, marked `session`, then today's and this month's totals, either across every session (`all:`) or for this session alone (`session:`); optionally per turn and per hour
 - **speed**: output tokens per second, live while a response streams (`~58 tok/s`) and exact once it ends, plus optionally cache hits and time to first token
+- **usage**: tokens and cost for this chat, for every session in this project folder and for today across every project, read from Claude Code's local session logs as Token Monitor counts them (`14M tok this chat · project 25M · today 94M`; this chat's cost is the spend tile's)
+- **open and close**: the band starts as one line, each tile's first line only. The `▾` at its end opens it: every tile's second line, then two lines of detail, the cost of the project, of today and of the last 7 days, and today's input with its cache hit rate, output and share by model. `▴` closes it
 
 Ring colors follow the level: ok under 60%, warn under 85%, danger above. In the terminal the rings become `○ ◔ ◑ ◕ ●` glyphs, and the pace tick an arrow (`▲` ahead of pace, `▽` behind).
 
@@ -24,8 +26,8 @@ Ring colors follow the level: ok under 60%, warn under 85%, danger above. In the
 
 | Layout | What it looks like |
 | --- | --- |
-| `tiles` (default) | Each ring with a two-line label: the name, then the forecast when there is one, else the reset time. Spend and speed are a tile each: the first figure on top, the rest below. Sized to sit in one row beside the desktop prompt box. |
-| `minimal` | Rings and the leading spend and speed figures only. |
+| `tiles` (default) | One line until opened with `▾`; opened, each ring has a two-line label: the name, then the forecast when there is one, else the reset time. Spend, speed and usage are a tile each: the first figure on top, the rest below. Sized to sit in one row beside the desktop prompt box. |
+| `minimal` | Rings and the leading spend, speed and usage figures only. |
 
 ## Settings
 
@@ -44,7 +46,7 @@ Run `/rings settings` to open a pane where you pick the layout, theme, language,
 | `/rings default desktop on` / `/rings default terminal off` | Whether new sessions on that surface start with the band shown; `/rings default` alone shows the current choice |
 | `/rings reset` | Back to the defaults, keeping the language |
 
-Parts: `ctx`, `5h`, `7d`, `models` (per-model and spend limits), `resets`, `pace`, `forecast`, `session`, `day`, `month`, `turn`, `rate` ($/h), `cache`, `speed`, `ttft`. All are on by default except `forecast`, `turn`, `rate`, `cache` and `ttft`.
+Parts: `ctx`, `5h`, `7d`, `models` (per-model and spend limits), `resets`, `pace`, `forecast`, `session`, `day`, `month`, `turn`, `rate` ($/h), `usage` (chat, project and today), `cache`, `speed`, `ttft`. All are on by default except `forecast`, `turn`, `rate`, `cache` and `ttft`.
 
 Color slots: `ok`, `warn`, `danger` (ring levels), `pace` (the pace tick), `track` (the ring background), `accent` (session spend).
 
@@ -72,7 +74,9 @@ Requires Claude Code 2.1.287 or later.
 
 ## Notes
 
-- Everything shown comes from the usage figures Claude Code reports to the mod. It makes no network calls and reads no files.
+- The mod makes no network calls. Everything but the usage tile comes from the usage figures Claude Code reports to the mod.
+- The usage tile reads Claude Code's session logs, the `.jsonl` files under `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`): this project folder's, and any other modified today. It reads them again at most every 15 seconds, only the logs that changed. A log over 4 MiB is read with `tail`, from where the last read stopped; where `tail` is missing (Windows), those logs are left out and the figures marked `+`. `/rings hide usage` stops the reading.
+- Usage counts every API response once (by message and request id), a subagent's included. The chat's cost is Claude Code's own, as `/cost` totals it; the project's and today's are estimated from Anthropic's list prices (cache writes at 1.25× input for five minutes, 2× for an hour, fast mode at 2×). A cost marked `+` leaves out responses from a model with no known price.
 - Day and month spend are summed by the mod itself across sessions, using Claude Code's plugin storage. A session begun today (or this month) counts from its first message for today (or this month), even when the mod loaded later; one begun earlier counts from when the mod first saw it in that day (or month). Days before the install are not counted. With several sessions open, each band picks up the others' spend within a minute.
 - The live speed is an estimate from the characters streamed (about four per token, one per CJK character); thinking the interface does not show is not counted until the response ends. The figure after a response ends uses the token count the API reports. Subagents' responses are left out.
 - The forecast uses the average rate since the window began, and appears once 5% of the window has gone by.

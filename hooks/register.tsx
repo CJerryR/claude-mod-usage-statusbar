@@ -1,7 +1,22 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage, Timer } from 'claude-code'
 
-import type { CtxBasis, Ledger, Limit, Mode, Part, Preset, RingSettings, Scope, Slot, Snapshot, StartSurface } from '../types'
+import type {
+  CtxBasis,
+  Ledger,
+  Limit,
+  Mode,
+  Part,
+  Preset,
+  RingSettings,
+  Scope,
+  Slot,
+  Snapshot,
+  StartSurface,
+  UsageBook,
+  UsageFigure,
+} from '../types'
+import { scanUsage } from './usage'
 
 const PART_IDS: Part[] = [
   'ctx',
@@ -19,6 +34,7 @@ const PART_IDS: Part[] = [
   'cache',
   'speed',
   'ttft',
+  'usage',
 ]
 const OFF_BY_DEFAULT: Part[] = ['forecast', 'turn', 'rate', 'cache', 'ttft']
 // How the settings pane groups the parts; every part sits in one group.
@@ -26,7 +42,7 @@ type PartGroup = 'rings' | 'details' | 'spend' | 'speed'
 const PART_GROUPS: [PartGroup, Part[]][] = [
   ['rings', ['ctx', '5h', '7d', 'models']],
   ['details', ['resets', 'pace', 'forecast']],
-  ['spend', ['session', 'day', 'month', 'turn', 'rate']],
+  ['spend', ['session', 'day', 'month', 'turn', 'rate', 'usage']],
   ['speed', ['speed', 'cache', 'ttft']],
 ]
 
@@ -69,6 +85,7 @@ const TEXT = {
       cache: 'Cache hits',
       speed: 'Tokens/s',
       ttft: 'First token',
+      usage: 'Usage (chat · project · today)',
     } as Record<Part, string>,
     slots: { ok: 'ok', warn: 'warn', danger: 'danger', pace: 'pace tick', track: 'track', accent: 'accent' } as Record<
       Slot,
@@ -93,6 +110,12 @@ const TEXT = {
     rate: (v: string) => `${v}/h`,
     cache: (p: number) => `${p}% cache`,
     ttft: (s: string) => `ttft ${s}s`,
+    usageLead: (tok: string) => `${tok} tok`,
+    usageRest: (project: string, today: string) => `this chat · project ${project} · today ${today}`,
+    usageCosts: (project: string, today: string, weekTok: string, weekUsd: string) =>
+      `Cost: project ${project} · today ${today} · last 7 days ${weekTok} tok, ${weekUsd}`,
+    usageMix: (input: string, hit: number, output: string) => `Today: input ${input}, ${hit}% from cache · output ${output}`,
+    otherModels: (p: number) => `other ${p}%`,
     paneTitle: 'Usage rings',
     layout: 'Layout',
     modes: { tiles: 'Tiles', minimal: 'Minimal' } as Record<Mode, string>,
@@ -168,6 +191,7 @@ const TEXT = {
       cache: '缓存命中',
       speed: '输出速度',
       ttft: '首 token',
+      usage: '用量（对话 · 项目 · 今天）',
     } as Record<Part, string>,
     slots: { ok: '正常', warn: '警告', danger: '危险', pace: '时间刻度', track: '底环', accent: '强调' } as Record<
       Slot,
@@ -192,6 +216,12 @@ const TEXT = {
     rate: (v: string) => `${v}/小时`,
     cache: (p: number) => `缓存 ${p}%`,
     ttft: (s: string) => `首 token ${s}s`,
+    usageLead: (tok: string) => `${tok} token`,
+    usageRest: (project: string, today: string) => `本对话 · 项目 ${project} · 今天 ${today}`,
+    usageCosts: (project: string, today: string, weekTok: string, weekUsd: string) =>
+      `花费：项目 ${project} · 今天 ${today} · 近 7 天 ${weekTok} token，${weekUsd}`,
+    usageMix: (input: string, hit: number, output: string) => `今天：输入 ${input}，${hit}% 命中缓存 · 输出 ${output}`,
+    otherModels: (p: number) => `其他 ${p}%`,
     paneTitle: '用量圆环',
     layout: '布局',
     modes: { tiles: '双行小卡', minimal: '极简' } as Record<Mode, string>,
@@ -260,6 +290,8 @@ const settings = atom({ plugin: 'usage-rings', key: 'settings' } as const, DEFAU
 const stream = atom({ plugin: 'usage-rings', key: 'stream' } as const, { isStreaming: false })
 const turn = atom({ plugin: 'usage-rings', key: 'turn' } as const, { startUsd: null, usd: null })
 const own = atom({ plugin: 'usage-rings', key: 'own' } as const, null)
+const usage = atom({ plugin: 'usage-rings', key: 'usage' } as const, null)
+const isUsageOpen = atom({ plugin: 'usage-rings', key: 'isUsageOpen' } as const, false)
 
 // $.store keys, shared by every session. A session's spend on a day is one figure under
 // USD + `<day>:<session id>:<startedAt>`, set (never added to), so a reload or a resume
@@ -331,6 +363,15 @@ const span = (ms: number) => {
 
 const tokens = (n: number) =>
   n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`
+
+// `claude-opus-5-5` as `Opus 5.5`, `claude-3-5-haiku-20241022` as `Haiku 3.5`; any other id as is.
+const modelName = (id: string) => {
+  if (!id.startsWith('claude-')) return id || '?'
+  const parts = id.slice('claude-'.length).split('-').filter(p => !/^\d{8}$/.test(p))
+  const family = parts.find(p => /^[a-z]+$/.test(p))
+  const version = parts.filter(p => /^\d+$/.test(p)).join('.')
+  return family ? `${family[0]?.toUpperCase()}${family.slice(1)}${version ? ` ${version}` : ''}` : id
+}
 
 const isLedger = (v: unknown): v is Ledger =>
   typeof v === 'object' &&
@@ -439,7 +480,8 @@ const ring = (percent: number | undefined, color: string, palette: Palette, elap
     const a = (Math.round(clamp(elapsed, 0, 100)) / 100) * 2 * Math.PI - Math.PI / 2
     const x = (d: number) => (18 + d * Math.cos(a)).toFixed(2)
     const y = (d: number) => (18 + d * Math.sin(a)).toFixed(2)
-    tick = `<line x1="${x(10.2)}" y1="${y(10.2)}" x2="${x(17.8)}" y2="${y(17.8)}" stroke="${palette.pace}" stroke-width="1.8" stroke-linecap="round"/>`
+    // A notch just outside the ring, like a clock's, so it does not read as the arc's end.
+    tick = `<line x1="${x(16.1)}" y1="${y(16.1)}" x2="${x(17.6)}" y2="${y(17.6)}" stroke="${palette.pace}" stroke-width="1.8" stroke-linecap="round"/>`
   }
   const label = percent === undefined ? '–' : `${Math.round(percent)}%`
   const size = label.length >= 4 ? 8.6 : 10
@@ -581,9 +623,37 @@ async function measureCompaction($: EngineInterface) {
   )
 }
 
+// Reads the session logs again at most every 15 seconds unless forced, never two scans at once.
+let usageScan: Promise<void> | undefined
+// Whether the main loop's response is streaming in, kept beside the state the band reads.
+let isStreamingNow = false
+let usageAt = 0
+function refreshUsage($: EngineInterface, isForced = false) {
+  usageScan ??= (async () => {
+    const now = await $.clock.now()
+    if ((!isForced && now - usageAt < 15_000) || !(await read($, settings)).parts.usage) return
+    // A response streaming in is drawn live; the logs are read once it is done.
+    if (!isForced && isStreamingNow) return
+    usageAt = now
+    const scan = await scanUsage($, await $.session.id(), now)
+    if (!scan) return
+    const book: UsageBook = { ...scan, day: dayKey(now) }
+    // A write redraws the band: skip it when nothing shown would change.
+    const shown = (b: UsageBook) => JSON.stringify(b, (_, v: unknown) => (typeof v === 'number' ? Math.round(v * 100) : v))
+    await update($, usage, u => (u !== null && shown(u) === shown(book) ? u : book))
+  })()
+    .catch((err: unknown) => $.ui.log(`usage-rings: reading the session logs failed: ${String(err)}`, { to: 'debug' }))
+    .finally(() => {
+      usageScan = undefined
+    })
+  return usageScan
+}
+
 async function change($: EngineInterface, edit: (s: RingSettings) => RingSettings) {
+  const was = (await read($, settings)).parts.usage
   const next = await update($, settings, s => toSettings(edit(s)))
   await $.store.set(SETTINGS, next)
+  if (next.parts.usage && !was) await refreshUsage($, true)
   return next
 }
 
@@ -711,6 +781,7 @@ export const register: Register = on => {
     // Each surface has its own default; a reload keeps what this session already chose.
     const where: StartSurface = e.surface === 'terminal' ? 'terminal' : 'desktop'
     await update($, isHidden, h => h ?? !stored.startShown[where])
+    void refreshUsage($, true)
 
     // Once a minute: redraw so the reset countdowns stay current, and pick up other sessions' spend.
     tick?.cancel()
@@ -718,6 +789,7 @@ export const register: Register = on => {
       void update($, minute, n => n + 1)
       void refreshLedger($)
       void measureCompaction($)
+      void refreshUsage($)
     })
 
     return next(e)
@@ -741,6 +813,7 @@ export const register: Register = on => {
     await account($, e.cost?.usd)
     const usd = e.cost?.usd
     if (usd !== undefined) await update($, turn, t => ({ startUsd: t.startUsd ?? usd, usd }))
+    void refreshUsage($)
 
     return next(e)
   })
@@ -756,6 +829,7 @@ export const register: Register = on => {
     if (e.agentId) return yield* next(e)
 
     const sentAt = await $.clock.now()
+    isStreamingNow = true
     let firstAt: number | undefined
     let count = 0
     let shownAt = 0
@@ -797,6 +871,7 @@ export const register: Register = on => {
         }
       }
     } finally {
+      isStreamingNow = false
       await update($, stream, s => (s.isStreaming ? { ...s, isStreaming: false, live: undefined } : s))
     }
   })
@@ -1036,19 +1111,50 @@ export const register: Register = on => {
     if (show.ttft && flow.ttftMs !== undefined) speed.push({ key: 'ttft', text: w.ttft((flow.ttftMs / 1000).toFixed(1)) })
     const cards = [spend, speed].filter(c => c.length > 0)
 
-    if (gauges.length === 0 && cards.length === 0) return next(e)
+    // Collapsed, the band is one line: each tile's first line. Opened, every tile has its second
+    // line again, and two lines of usage detail follow.
+    const isOpen = await read($, isUsageOpen)
+    const isTwoLine = isOpen && !isMinimal
+    const used = show.usage ? await read($, usage) : null
+    const book2 = used?.day === today && used.week ? used : null
+    const mark = (f: UsageFigure) => (f.isPartial ? '+' : '')
+    const usdMark = (f: UsageFigure) => (f.isPartial || f.hasUnpriced ? '+' : '')
+    const tok = (f: UsageFigure) => `${tokens(f.tokens)}${mark(f)}`
+    const cost = (f: UsageFigure) => `${money(f.usd)}${usdMark(f)}`
+    const usageLead = show.usage ? w.usageLead(book2 ? tok(book2.session) : '–') : undefined
+    const usageRest = book2 ? w.usageRest(tok(book2.project), tok(book2.today)) : undefined
+    const usageDetail = (() => {
+      if (!book2 || !isOpen) return []
+      const m = book2.mix
+      const input = m.input + m.read + m.write
+      const share = (n: number) => (book2.today.tokens > 0 ? Math.round((n / book2.today.tokens) * 100) : 0)
+      const top = m.models.slice(0, 2).filter(x => share(x.tokens) > 0)
+      const rest = m.models.slice(2).reduce((n, x) => n + x.tokens, 0)
+      const models = [
+        ...top.map(x => `${modelName(x.id)} ${share(x.tokens)}%`),
+        ...(share(rest) > 0 ? [w.otherModels(share(rest))] : []),
+      ]
+      return [
+        w.usageCosts(cost(book2.project), cost(book2.today), tok(book2.week), cost(book2.week)),
+        [w.usageMix(tokens(input), input > 0 ? Math.round((m.read / input) * 100) : 0, tokens(m.output)), ...models].join(' · '),
+      ]
+    })()
+    const toggle = () => void update($, isUsageOpen, o => !o)
+
+    if (gauges.length === 0 && cards.length === 0 && !usageLead) return next(e)
 
     const ui = $.ui.resolve(e)
-    const { Box, Text } = ui
+    const { Box, Text, Button } = ui
     const isDev = isDevRoot($.plugin.root)
+    const toggleButton = <Button key="usage-toggle" label={isOpen ? '▴' : '▾'} plain dimColor onPress={toggle} />
 
     if (e.surface !== 'terminal' && 'Svg' in ui) {
       const { Svg } = ui
-      const size = isMinimal ? 28 : 32
+      const size = isMinimal ? 28 : isTwoLine ? 32 : 24
       const band = (
         <Box flexDirection="row" flexWrap="wrap" columnGap={3} rowGap={1} alignItems="center" flexGrow={1} flexShrink={1}>
           {gauges.map(g => {
-            const below = secondLine(g)
+            const below = isTwoLine ? secondLine(g) : undefined
             const svg = (
               <Svg
                 source={ring(g.percent, colorOf(g), palette, show.pace ? g.elapsed : undefined)}
@@ -1087,7 +1193,7 @@ export const register: Register = on => {
                     {lead.text}
                   </Text>
                 )}
-                {!isMinimal && rest.length > 0 ? (
+                {isTwoLine && rest.length > 0 ? (
                   <Text size="footnote" dimColor tabular>
                     {rest.map(f => f.text).join(' · ')}
                   </Text>
@@ -1095,12 +1201,40 @@ export const register: Register = on => {
               </Box>
             ),
           )}
+          {usageLead ? (
+            <Box key="card-usage" flexDirection="row" gap={1}>
+              <Text weight="semibold" tabular>
+                {usageLead}
+              </Text>
+              {!isMinimal && usageRest ? (
+                <Text dimColor tabular>
+                  {usageRest}
+                </Text>
+              ) : null}
+            </Box>
+          ) : null}
+          {toggleButton}
         </Box>
       )
-      if (!isDev) return band
+      const body =
+        usageDetail.length > 0 ? (
+          <Box flexDirection="column" gap={1} flexGrow={1} flexShrink={1}>
+            {band}
+            <Box key="usage-detail" flexDirection="column">
+              {usageDetail.map((text, i) => (
+                <Text key={`usage-detail-${i}`} size="footnote" dimColor tabular>
+                  {text}
+                </Text>
+              ))}
+            </Box>
+          </Box>
+        ) : (
+          band
+        )
+      if (!isDev) return body
       return (
         <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" width="100%" gap={1}>
-          {band}
+          {body}
           <Box key="dev" flexShrink={0} alignSelf="flex-start">
             <Svg source={devTag(palette.warn)} alt="dev" width={30} height={16} />
           </Box>
@@ -1115,18 +1249,31 @@ export const register: Register = on => {
       const head = g.percent === undefined ? `○ –` : `${glyph(g.percent)} ${Math.round(g.percent)}%`
       const pace =
         show.pace && g.elapsed !== undefined && g.percent !== undefined ? (g.percent > g.elapsed ? ' ▲' : ' ▽') : ''
-      const below = isMinimal ? undefined : secondLine(g)
+      const below = isTwoLine ? secondLine(g) : undefined
       return `${head}${pace} ${g.label}${below ? ` ${below.text}` : ''}`
     })
     const cardText = cards.map(c =>
-      (isMinimal ? c.slice(0, 1) : c).map(f => (f.label && !isMinimal ? `${f.text} ${f.label}` : f.text)).join(' · '),
+      (isTwoLine ? c : c.slice(0, 1)).map(f => (f.label && !isMinimal ? `${f.text} ${f.label}` : f.text)).join(' · '),
     )
-    return (
+    const usageText = usageLead ? [[usageLead, isMinimal ? undefined : usageRest].filter(Boolean).join(' ')] : []
+    const line = (
       <Box flexDirection="row" gap={2}>
         <Box flexGrow={1} flexShrink={1}>
-          <Text dimColor>{[...gaugeText, ...cardText].join('   ')}</Text>
+          <Text dimColor>{[...gaugeText, ...cardText, ...usageText].join('   ')}</Text>
         </Box>
+        {toggleButton}
         {isDev ? <Text color={palette.warn}>dev</Text> : null}
+      </Box>
+    )
+    if (usageDetail.length === 0) return line
+    return (
+      <Box flexDirection="column">
+        {line}
+        {usageDetail.map((text, i) => (
+          <Text key={`usage-detail-${i}`} dimColor>
+            {`  ${text}`}
+          </Text>
+        ))}
       </Box>
     )
   })

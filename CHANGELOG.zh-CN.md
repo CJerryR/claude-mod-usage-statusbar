@@ -4,6 +4,12 @@
 
 每个版本也发布在 [GitHub releases 页面](https://github.com/shiqkuangsan/claude-mod-usage-statusbar/releases)。已安装的用户运行 `claude plugin update usage-rings@claude-mod-usage-statusbar` 更新，然后执行 `/reload-plugins` 或开新会话。
 
+## 0.8.0 (2026-11-04)
+
+- **用量**：新增一张小卡，显示本对话、本项目文件夹和今天所有项目的 token 数和花费，从 Claude Code 的本机会话记录读取，算法与 Token Monitor 一致。整条默认只有一行；点末尾的 `▾` 展开每张小卡的第二行，再加两行明细：本项目、今天和近 7 天的花费，以及今天的输入、缓存命中率、输出和各模型占比。`▴` 收起。`/rings hide usage` 关闭它并停止读取。
+- mod 现在会读取文件：`~/.claude/projects` 下的会话记录；超过 4 MiB 的记录通过 `tail` 读取。仍然不发起任何网络请求。
+- 时间刻度改为圆环外侧的小刻度，不会再被看成用量弧的末端。
+
 ## 0.7.0 (2026-10-29)
 
 - `/rings settings` 面板底部显示已安装的版本号（`usage-rings 0.7.0`），开发副本显示 `usage-rings dev`。
