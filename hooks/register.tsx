@@ -480,8 +480,7 @@ const ring = (percent: number | undefined, color: string, palette: Palette, elap
     const a = (Math.round(clamp(elapsed, 0, 100)) / 100) * 2 * Math.PI - Math.PI / 2
     const x = (d: number) => (18 + d * Math.cos(a)).toFixed(2)
     const y = (d: number) => (18 + d * Math.sin(a)).toFixed(2)
-    // A notch just outside the ring, like a clock's, so it does not read as the arc's end.
-    tick = `<line x1="${x(16.1)}" y1="${y(16.1)}" x2="${x(17.6)}" y2="${y(17.6)}" stroke="${palette.pace}" stroke-width="1.8" stroke-linecap="round"/>`
+    tick = `<line x1="${x(10.2)}" y1="${y(10.2)}" x2="${x(17.8)}" y2="${y(17.8)}" stroke="${palette.pace}" stroke-width="1.8" stroke-linecap="round"/>`
   }
   const label = percent === undefined ? '–' : `${Math.round(percent)}%`
   const size = label.length >= 4 ? 8.6 : 10
@@ -625,17 +624,18 @@ async function measureCompaction($: EngineInterface) {
 
 // Reads the session logs again at most every 15 seconds unless forced, never two scans at once.
 let usageScan: Promise<void> | undefined
-// Whether the main loop's response is streaming in, kept beside the state the band reads.
-let isStreamingNow = false
+// Set while the main loop's response streams in, resolved when it is done: a log read waits on it.
+let streaming: { done: Promise<void>; end: () => void } | undefined
+const idle = () => streaming?.done ?? Promise.resolve()
 let usageAt = 0
 function refreshUsage($: EngineInterface, isForced = false) {
   usageScan ??= (async () => {
     const now = await $.clock.now()
     if ((!isForced && now - usageAt < 15_000) || !(await read($, settings)).parts.usage) return
     // A response streaming in is drawn live; the logs are read once it is done.
-    if (!isForced && isStreamingNow) return
+    if (!isForced && streaming) return
     usageAt = now
-    const scan = await scanUsage($, await $.session.id(), now)
+    const scan = await scanUsage($, await $.session.id(), now, idle)
     if (!scan) return
     const book: UsageBook = { ...scan, day: dayKey(now) }
     // A write redraws the band: skip it when nothing shown would change.
@@ -829,7 +829,8 @@ export const register: Register = on => {
     if (e.agentId) return yield* next(e)
 
     const sentAt = await $.clock.now()
-    isStreamingNow = true
+    let end = () => {}
+    streaming = { done: new Promise<void>(resolve => (end = resolve)), end: () => end() }
     let firstAt: number | undefined
     let count = 0
     let shownAt = 0
@@ -871,7 +872,8 @@ export const register: Register = on => {
         }
       }
     } finally {
-      isStreamingNow = false
+      streaming?.end()
+      streaming = undefined
       await update($, stream, s => (s.isStreaming ? { ...s, isStreaming: false, live: undefined } : s))
     }
   })

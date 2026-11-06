@@ -13,7 +13,7 @@ A Claude Code mod that keeps a usage band above the prompt, drawn as ring gauges
 - **ctx**: how full the context is against the auto-compact window, as the session rail and `/context` measure it, and how many tokens are left before compaction; `/rings ctx model` measures against the model's whole window instead, with the token count
 - **5h** and **7d**: plan rate-limit windows, each with the time left until it resets
 - any per-model weekly window the API reports, under the model's name
-- **pace tick**: a notch just outside each window's ring where its time has got to, so an arc past the notch means usage runs ahead of time
+- **pace tick**: a mark across each window's ring where its time has got to, so an arc past the mark means usage runs ahead of time
 - **forecast** (off by default, `/rings show forecast`): when the window's average rate so far would use it up before it resets, the tile says `full ~1h57m` and the ring turns amber
 - **spend**: this session's whole cost, marked `session`, then today's and this month's totals, either across every session (`all:`) or for this session alone (`session:`); optionally per turn and per hour
 - **speed**: output tokens per second, live while a response streams (`~58 tok/s`) and exact once it ends, plus optionally cache hits and time to first token

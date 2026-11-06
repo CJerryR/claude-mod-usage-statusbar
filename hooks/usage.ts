@@ -112,20 +112,27 @@ const recOf = (line: string, at: string): Rec | undefined => {
   }
 }
 
+// Resolves once no response is streaming in: the band's `turn.step` hook shares this module's
+// one thread, and its budget runs on while a read here holds it.
+export type Idle = () => Promise<void>
+
 // Each whole line of `text` read into `recs`; what follows the last newline is not yet a line.
-// Every few thousand lines it hands the engine a turn, so the band's other hooks keep running.
-async function readLines($: EngineInterface, text: string, recs: Rec[], where: string) {
+// Every few hundred lines it hands the engine a turn, and waits while a response streams in.
+async function readLines($: EngineInterface, idle: Idle, text: string, recs: Rec[], where: string) {
   const end = text.lastIndexOf('\n')
   const lines = end < 0 ? [] : text.slice(0, end).split('\n')
   for (let i = 0; i < lines.length; i++) {
-    if (i > 0 && i % 2000 === 0) await $.clock.now()
+    if (i > 0 && i % 200 === 0) {
+      await idle()
+      await $.clock.now()
+    }
     const rec = recOf(lines[i] ?? '', `${where}:${i}`)
     if (rec) recs.push(rec)
   }
   return end < 0 ? '' : text.slice(0, end + 1)
 }
 
-async function scanFile($: EngineInterface, path: string, size: number, mtimeMs: number): Promise<FileScan> {
+async function scanFile($: EngineInterface, idle: Idle, path: string, size: number, mtimeMs: number): Promise<FileScan> {
   const stamp = `${size}:${mtimeMs}`
   const kept = files.get(path)
   if (kept?.stamp === stamp) return kept
@@ -133,7 +140,7 @@ async function scanFile($: EngineInterface, path: string, size: number, mtimeMs:
   if (size <= MAX_READ) {
     const recs: Rec[] = []
     try {
-      const used = await readLines($, await $.fs.read(path), recs, path)
+      const used = await readLines($, idle, await $.fs.read(path), recs, path)
       scan = { stamp, offset: utf8.encode(used).length, recs, isPartial: false }
     } catch {
       scan = { stamp, offset: 0, recs: [], isPartial: true }
@@ -148,7 +155,7 @@ async function scanFile($: EngineInterface, path: string, size: number, mtimeMs:
     try {
       for await (const piece of $.process.spawn({ argv: ['tail', '-c', `+${from + 1}`, path] })) {
         if (piece.stream !== 'stdout') continue
-        const used = await readLines($, carry + piece.text, recs, `${path}@${offset}`)
+        const used = await readLines($, idle, carry + piece.text, recs, `${path}@${offset}`)
         offset += utf8.encode(used).length
         carry = (carry + piece.text).slice(used.length)
       }
@@ -213,6 +220,7 @@ export async function scanUsage(
   $: EngineInterface,
   sessionId: string,
   now: number,
+  idle: Idle,
 ): Promise<Omit<UsageBook, 'day'> | undefined> {
   const root = (await $.session.root()).replace(/[^a-zA-Z0-9]/g, '-')
   const base = await projectsDir($)
@@ -245,7 +253,7 @@ export async function scanUsage(
       }
     }
     for (const log of logs) {
-      const scan = await scanFile($, log.file, log.size, log.mtimeMs)
+      const scan = await scanFile($, idle, log.file, log.size, log.mtimeMs)
       if (isProject) add(project, scan, () => true)
       if (isProject && log.owner === sessionId) add(session, scan, () => true)
       add(today, scan, r => r.at >= dayStart)
