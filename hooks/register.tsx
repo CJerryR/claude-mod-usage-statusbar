@@ -83,7 +83,7 @@ const TEXT = {
     resetsIn: (x: string) => `resets in ${x}`,
     gone: (p: number) => `${p}% of the window gone`,
     toCompact: (x: string) => `${x} to compact`,
-    compactsAt: (x: string) => `compacts at ${x}`,
+    compactWindow: (x: string) => `auto-compact window ${x}`,
     modelWindow: (x: string) => `model window ${x}`,
     sessionLabel: 'session',
     totals: (scope: Scope, figures: string) => `${scope === 'all' ? 'all' : 'session'}: ${figures}`,
@@ -182,7 +182,7 @@ const TEXT = {
     resetsIn: (x: string) => `${x} 后重置`,
     gone: (p: number) => `时间已过 ${p}%`,
     toCompact: (x: string) => `距压缩 ${x}`,
-    compactsAt: (x: string) => `${x} 时自动压缩`,
+    compactWindow: (x: string) => `自动压缩窗口 ${x}`,
     modelWindow: (x: string) => `模型窗口 ${x}`,
     sessionLabel: '本会话',
     totals: (scope: Scope, figures: string) => `${scope === 'all' ? '全部' : '本会话'}：${figures}`,
@@ -952,29 +952,31 @@ export const register: Register = on => {
     const ctxTokens =
       snap.contextTokens ??
       (snap.contextPercent === undefined ? undefined : Math.round((snap.contextPercent / 100) * snap.contextWindow))
-    // Against the auto-compact window, as the session rail measures it, when the setting is on and
-    // compaction is; else against the model's whole window.
-    const toCompact = s.ctxBasis === 'compact' && snap.compactWindow !== undefined && ctxTokens !== undefined
-    const ctx: Gauge = toCompact
-      ? {
-          key: 'ctx',
-          label: w.ctx,
-          percent: (ctxTokens / snap.compactWindow!) * 100,
-          canForecast: false,
-          note: w.toCompact(tokens(Math.max(0, (snap.compactAt ?? snap.compactWindow!) - ctxTokens))),
-          about: [
-            `${tokens(ctxTokens)} / ${tokens(snap.compactWindow!)}`,
-            w.compactsAt(tokens(snap.compactAt ?? snap.compactWindow!)),
-            w.modelWindow(tokens(snap.contextWindow)),
-          ].join(' · '),
-        }
-      : {
-          key: 'ctx',
-          label: w.ctx,
-          percent: snap.contextPercent,
-          canForecast: false,
-          note: ctxTokens === undefined ? undefined : `${tokens(ctxTokens)} / ${tokens(snap.contextWindow)}`,
-        }
+    // Against the point where auto-compact starts, so 100% is the moment it compacts, when the
+    // setting is on and compaction is; else against the model's whole window. The session rail and
+    // /context measure against the larger auto-compact window, which compaction never fills.
+    const compactAt = s.ctxBasis === 'compact' ? (snap.compactAt ?? snap.compactWindow) : undefined
+    const ctx: Gauge =
+      compactAt !== undefined && ctxTokens !== undefined
+        ? {
+            key: 'ctx',
+            label: w.ctx,
+            percent: (ctxTokens / compactAt) * 100,
+            canForecast: false,
+            note: w.toCompact(tokens(Math.max(0, compactAt - ctxTokens))),
+            about: [
+              `${tokens(ctxTokens)} / ${tokens(compactAt)}`,
+              w.compactWindow(tokens(snap.compactWindow!)),
+              w.modelWindow(tokens(snap.contextWindow)),
+            ].join(' · '),
+          }
+        : {
+            key: 'ctx',
+            label: w.ctx,
+            percent: snap.contextPercent,
+            canForecast: false,
+            note: ctxTokens === undefined ? undefined : `${tokens(ctxTokens)} / ${tokens(snap.contextWindow)}`,
+          }
     const gauges: Gauge[] = [
       ...(show.ctx ? [ctx] : []),
       ...snap.limits.filter(l => show[describe(l.kind, w).part]).map(l => toGauge(l, t, w, snap.isLimitsStale)),

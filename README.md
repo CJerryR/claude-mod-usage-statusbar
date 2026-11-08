@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 
 A Claude Code mod that keeps a usage band above the prompt, drawn as ring gauges with the percentage inside:
 
-- **ctx**: how full the context is against the auto-compact window, as the session rail and `/context` measure it, and how many tokens are left before compaction; `/rings ctx model` measures against the model's whole window instead, with the token count
+- **ctx**: how full the context is against the point where auto-compact starts, so 100% is the moment it compacts, and how many tokens are left before then (the session rail and `/context` measure against the larger auto-compact window, which compaction never fills, so they read lower); `/rings ctx model` measures against the model's whole window instead, with the token count
 - **5h** and **7d**: plan rate-limit windows, each with the time left until it resets
 - any per-model weekly window the API reports, under the model's name
 - **pace tick**: a mark across each window's ring where its time has got to, so an arc past the mark means usage runs ahead of time
@@ -37,7 +37,7 @@ Run `/rings settings` to open a pane where you pick the layout, theme, language,
 | `/rings mode tiles` / `/rings mode minimal` | Switch the layout |
 | `/rings lang en` / `/rings lang zh` | English (default) or Chinese |
 | `/rings scope all` / `/rings scope session` | Whether today and month total every session (default) or this session alone |
-| `/rings ctx compact` / `/rings ctx model` | Whether ctx measures against the auto-compact window (default) or the model's whole window |
+| `/rings ctx compact` / `/rings ctx model` | Whether ctx measures to auto-compact (default) or against the model's whole window |
 | `/rings show <parts>` / `/rings hide <parts>` | Switch parts on or off, several at once, or `all` |
 | `/rings theme <name>` | `default`, `ocean`, `grape` or `mono` |
 | `/rings color <slot> <#hex>` | Override one color; `reset` in place of the color follows the theme again |

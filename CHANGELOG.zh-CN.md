@@ -4,6 +4,10 @@
 
 每个版本也发布在 [GitHub releases 页面](https://github.com/shiqkuangsan/claude-mod-usage-statusbar/releases)。已安装的用户运行 `claude plugin update usage-rings@claude-mod-usage-statusbar` 更新，然后执行 `/reload-plugins` 或开新会话。
 
+## 0.7.1 (2026-11-06)
+
+- 修复：上下文圆环在 90% 左右就自动压缩了，因为它按自动压缩窗口计算，而压缩前这个窗口永远填不满。现在改为按自动压缩触发点计算，100% 就是开始压缩的时刻（`163k / 367k` 显示 44%，原来是 41%），因此会比 session rail 和 `/context` 显示的高。圆环描述里列出自动压缩窗口和模型窗口。
+
 ## 0.7.0 (2026-10-29)
 
 - `/rings settings` 面板底部显示已安装的版本号（`usage-rings 0.7.0`），开发副本显示 `usage-rings dev`。

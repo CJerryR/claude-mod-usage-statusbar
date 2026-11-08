@@ -136,7 +136,7 @@ test('tiles: rings with the percentage inside, a second line each, spend and spe
   await forecastLine.unmount()
 })
 
-test('ctx measures against the auto-compact window, as the session rail does, unless turned off', async ($, on) => {
+test('ctx measures to the point auto-compact starts, so 100% is compaction, unless turned off', async ($, on) => {
   await start($, on, 'desktop', { rawMaxTokens: 400000, autoCompactThreshold: 367000, isAutoCompactEnabled: true })
   await $.session.measure({
     context: { window: 1000000, tokens: 163000, percent: 16 },
@@ -146,15 +146,16 @@ test('ctx measures against the auto-compact window, as the session rail does, un
   })
 
   const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await svgOf(desktop, 'ctx')).toContain('41%</text>')
+  // 163k of the 367k at which compaction starts, not of the 400k window it never fills.
+  expect(await svgOf(desktop, 'ctx')).toContain('44%</text>')
   expect((await desktop.find({ type: 'Text', text: '204k to compact' }))?.text).toBe('204k to compact')
   // The ring's description keeps every figure, the model's window included.
   expect((await desktop.findAll({ type: 'Svg' })).find(r => String(r.props.alt).startsWith('ctx'))?.props.alt).toBe(
-    'ctx: 41% used · 163k / 400k · compacts at 367k · model window 1M',
+    'ctx: 44% used · 163k / 367k · auto-compact window 400k · model window 1M',
   )
   await desktop.unmount()
   const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await terminal.find({ type: 'Text', text: /ctx/ }))?.text).toContain('◑ 41% ctx 204k to compact')
+  expect((await terminal.find({ type: 'Text', text: /ctx/ }))?.text).toContain('◑ 44% ctx 204k to compact')
   await terminal.unmount()
 
   // Off: the model's window, as before.
@@ -172,7 +173,7 @@ test('ctx measures against the auto-compact window, as the session rail does, un
   await pane.select({ key: 'ctx', value: 'compact' })
   await pane.unmount()
   band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect(await svgOf(band, 'ctx')).toContain('41%</text>')
+  expect(await svgOf(band, 'ctx')).toContain('44%</text>')
   await band.unmount()
 })
 

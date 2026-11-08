@@ -4,6 +4,10 @@ English | [简体中文](CHANGELOG.zh-CN.md)
 
 Every release is also on the [GitHub releases page](https://github.com/shiqkuangsan/claude-mod-usage-statusbar/releases). Update an installed copy with `claude plugin update usage-rings@claude-mod-usage-statusbar`, then `/reload-plugins` or a new session.
 
+## 0.7.1 (2026-11-06)
+
+- Fixed: ctx compacted at about 90%, as it measured against the auto-compact window, which compaction never fills. It now measures to the point where auto-compact starts, so 100% is the moment it compacts (`163k / 367k` reads 44%, not 41%). It now reads higher than the session rail and `/context`. The ring's description names the auto-compact window and the model's window.
+
 ## 0.7.0 (2026-10-29)
 
 - The `/rings settings` pane names the installed version at its foot (`usage-rings 0.7.0`), or `usage-rings dev` for a working copy.
