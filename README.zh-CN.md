@@ -10,7 +10,7 @@
 
 一个 Claude Code mod，在输入框上方显示一条用量面板，每项用量画成一个圆环，百分比显示在圆环中间：
 
-- **ctx**：上下文按自动压缩窗口用了多少（和 session rail、`/context` 的算法一致），以及距自动压缩还剩多少 token；`/rings ctx model` 改为按模型的完整窗口计算，并显示 token 数
+- **ctx**：上下文距自动压缩触发点用了多少，100% 就是开始压缩的时刻，以及距压缩还剩多少 token（session rail 和 `/context` 按更大的自动压缩窗口计算，压缩前永远填不满，所以数字偏低）；`/rings ctx model` 改为按模型的完整窗口计算，并显示 token 数
 - **5h** 和 **7d**：套餐的两个限额窗口，各自带有距离重置的剩余时间
 - API 返回的按模型单独计算的周限额，以模型名显示
 - **时间刻度**：每个限额圆环上的一道刻度，标出窗口时间已经过去多少；用量弧越过刻度，说明用量跑得比时间快
@@ -38,7 +38,7 @@
 | `/rings mode tiles` / `/rings mode minimal` | 切换布局 |
 | `/rings lang en` / `/rings lang zh` | 英文（默认）或中文 |
 | `/rings scope all` / `/rings scope session` | 今日和本月统计所有会话（默认）还是只统计本会话 |
-| `/rings ctx compact` / `/rings ctx model` | 上下文按自动压缩窗口（默认）还是按模型的完整窗口计算 |
+| `/rings ctx compact` / `/rings ctx model` | 上下文按距自动压缩（默认）还是按模型的完整窗口计算 |
 | `/rings show <组件>` / `/rings hide <组件>` | 显示或隐藏组件，可以一次写多个，或写 `all` |
 | `/rings theme <名称>` | `default`、`ocean`、`grape` 或 `mono` |
 | `/rings color <颜色槽> <#hex>` | 覆盖某个颜色；颜色写成 `reset` 则恢复跟随主题 |

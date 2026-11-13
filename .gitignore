@@ -1,0 +1,5 @@
+# Written by the engine when it loads this folder as a dev plugin
+.claude-plugin/types/
+
+# Per-machine Claude Code settings (loads this folder as the dev plugin)
+.claude/settings.local.json

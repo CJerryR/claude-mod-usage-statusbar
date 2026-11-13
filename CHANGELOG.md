@@ -10,6 +10,10 @@ Every release is also on the [GitHub releases page](https://github.com/shiqkuang
 - `/rings usage` prints each scope's tokens and cost, the last 7 days', and today's mix by kind and by model.
 - The mod now reads the session logs under `~/.claude/projects`, and, for a log over 4 MiB, through `tail`. It still makes no network calls. `/rings hide usage` turns the `▾` off and stops the reading.
 
+## 0.7.1 (2026-11-06)
+
+- Fixed: ctx compacted at about 90%, as it measured against the auto-compact window, which compaction never fills. It now measures to the point where auto-compact starts, so 100% is the moment it compacts (`163k / 367k` reads 44%, not 41%). It now reads higher than the session rail and `/context`. The ring's description names the auto-compact window and the model's window.
+
 ## 0.7.0 (2026-10-29)
 
 - The `/rings settings` pane names the installed version at its foot (`usage-rings 0.7.0`), or `usage-rings dev` for a working copy.
