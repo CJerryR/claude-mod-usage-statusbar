@@ -4,10 +4,11 @@ English | [简体中文](CHANGELOG.zh-CN.md)
 
 Every release is also on the [GitHub releases page](https://github.com/shiqkuangsan/claude-mod-usage-statusbar/releases). Update an installed copy with `claude plugin update usage-rings@claude-mod-usage-statusbar`, then `/reload-plugins` or a new session.
 
-## 0.8.0 (2026-11-04)
+## 0.8.0 (2026-11-06)
 
-- **Usage**: a new tile with tokens and cost for this chat, for this project folder and for today across every project, read from Claude Code's local session logs as Token Monitor counts them. The band now starts as one line; the `▾` at its end opens every tile's second line and two lines of detail: the project's, today's and the last 7 days' cost, and today's input, cache hit rate, output and share by model. `▴` closes it. `/rings hide usage` turns it off and stops the reading.
-- The mod now reads files: the session logs under `~/.claude/projects`, and, for a log over 4 MiB, through `tail`. It still makes no network calls.
+- **▾ usage charts**: the band stays 0.7.0's one line, with a `▾` at its right end. It opens, below it, a tile with a ring for each scope (this chat's cache hit rate, the project's and today's share of the week) plus the last 7 days and the last hour, read from Claude Code's local session logs as Token Monitor counts them, and four charts, two to a row across the band: the last 7 days by day against the daily average, today by hour, today's mix by kind (cache read, cache write, input, output) and by model with each model's cost, and the five busiest projects of the week. A pointer over a bar shows its exact figures. In the terminal the charts are rows of block glyphs. `▴` closes it.
+- `/rings usage` prints each scope's tokens and cost, the last 7 days', and today's mix by kind and by model.
+- The mod now reads the session logs under `~/.claude/projects`, and, for a log over 4 MiB, through `tail`. It still makes no network calls. `/rings hide usage` turns the `▾` off and stops the reading.
 
 ## 0.7.0 (2026-10-29)
 

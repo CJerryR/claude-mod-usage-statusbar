@@ -45,16 +45,6 @@ const PANE = {
   },
 } as const
 
-type Tester = Parameters<TestBody>[0]
-// The band, opened: every tile's second line, as a press on its toggle shows them.
-const openBand = async ($: Tester, surface: 'desktop' | 'terminal') => {
-  const band = await $.ui.mount({ ...BAND, surface })
-  if (!(await band.find({ type: 'Button', text: '▾' }))) return band
-  await band.press({ key: 'usage-toggle' })
-  await band.unmount()
-  return $.ui.mount({ ...BAND, surface })
-}
-
 // The color of the innermost Text holding exactly these words.
 const colorOf = async (ui: { findAll: (q: { type: string; text: string }) => Promise<{ props: Record<string, unknown> }[]> }, text: string) =>
   (await ui.findAll({ type: 'Text', text })).map(t => t.props.color).find(c => c !== undefined)
@@ -75,6 +65,8 @@ async function start(
   mock.store(on)
   on('session.id', () => ({ value: 'session-a' }))
   on('command.register', () => ({ value: { command: 'rings' } }))
+  // Usage is on by default: with no session logs given, reading them fails and says so in the debug log.
+  on('ui.log', () => ({ value: undefined as never }))
   on('session.usage', () => ({
     value: {
       startedAt: NOW - 2 * 3_600_000,
@@ -105,7 +97,7 @@ const ringCount = async (ui: { findAll: (q: { type: string }) => Promise<{ props
 test('tiles: rings with the percentage inside, a second line each, spend and speed cards', async ($, on) => {
   await start($, on)
 
-  const desktop = await openBand($, 'desktop')
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   for (const words of ['ctx', '380k / 1M', '5h', '4h22m', '7d', '4d17h', 'Fable', '$15.24', 'all: today $15.24 · mo $15.24']) {
     expect((await desktop.find({ type: 'Text', text: words }))?.text).toBe(words)
   }
@@ -128,7 +120,7 @@ test('tiles: rings with the percentage inside, a second line each, spend and spe
   expect(await svgOf(desktop, 'dev')).toContain('stroke="#f59e0b"')
   await desktop.unmount()
 
-  const terminal = await openBand($, 'terminal')
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const line = (await terminal.find({ type: 'Text', text: /ctx/ }))?.text ?? ''
   expect(line).toContain('◑ 38% ctx 380k / 1M')
   expect(line).toContain('◑ 60% ▲ 5h 4h22m')
@@ -138,10 +130,10 @@ test('tiles: rings with the percentage inside, a second line each, spend and spe
 
   // Turned on, the forecast says when 5h runs out at its rate so far, in amber.
   await $.command.run(rings('show forecast'))
-  const forecast = await openBand($, 'desktop')
+  const forecast = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await colorOf(forecast, 'full ~25m')).toBe('#f59e0b')
   await forecast.unmount()
-  const forecastLine = await openBand($, 'terminal')
+  const forecastLine = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await forecastLine.find({ type: 'Text', text: /ctx/ }))?.text).toContain('◑ 60% ▲ 5h full ~25m')
   await forecastLine.unmount()
 })
@@ -155,7 +147,7 @@ test('ctx measures against the auto-compact window, as the session rail does, un
     changed: ['context'],
   })
 
-  const desktop = await openBand($, 'desktop')
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await svgOf(desktop, 'ctx')).toContain('41%</text>')
   expect((await desktop.find({ type: 'Text', text: '204k to compact' }))?.text).toBe('204k to compact')
   // The ring's description keeps every figure, the model's window included.
@@ -163,7 +155,7 @@ test('ctx measures against the auto-compact window, as the session rail does, un
     'ctx: 41% used · 163k / 400k · compacts at 367k · model window 1M',
   )
   await desktop.unmount()
-  const terminal = await openBand($, 'terminal')
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await terminal.find({ type: 'Text', text: /ctx/ }))?.text).toContain('◑ 41% ctx 204k to compact')
   await terminal.unmount()
 
@@ -172,7 +164,7 @@ test('ctx measures against the auto-compact window, as the session rail does, un
     'Usage: /rings ctx compact|model. ctx measures against the auto-compact window now.',
   )
   expect((await $.command.run(rings('ctx model')))?.text).toBe('ctx now measures against the model window.')
-  let band = await openBand($, 'desktop')
+  let band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await svgOf(band, 'ctx')).toContain('16%</text>')
   expect((await band.find({ type: 'Text', text: '163k / 1M' }))?.text).toBe('163k / 1M')
   await band.unmount()
@@ -181,14 +173,14 @@ test('ctx measures against the auto-compact window, as the session rail does, un
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await pane.select({ key: 'ctx', value: 'compact' })
   await pane.unmount()
-  band = await openBand($, 'desktop')
+  band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await svgOf(band, 'ctx')).toContain('41%</text>')
   await band.unmount()
 })
 
 test('with auto-compact off, ctx measures against the model window', async ($, on) => {
   await start($, on, 'desktop', { rawMaxTokens: 1000000, isAutoCompactEnabled: false })
-  const band = await openBand($, 'desktop')
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await svgOf(band, 'ctx')).toContain('38%</text>')
   expect((await band.find({ type: 'Text', text: '380k / 1M' }))?.text).toBe('380k / 1M')
   await band.unmount()
@@ -202,7 +194,7 @@ test('/rings switches the language, the parts, the colors and the layout', async
   }
   expect((await $.command.run(rings('color ok red'))).text).toContain('#rgb')
 
-  const zh = await openBand($, 'desktop')
+  const zh = await $.ui.mount({ ...BAND, surface: 'desktop' })
   for (const words of ['约 25m 用满', '全部：本月 $15.24']) {
     expect((await zh.find({ type: 'Text', text: words }))?.text).toBe(words)
   }
@@ -213,7 +205,7 @@ test('/rings switches the language, the parts, the colors and the layout', async
   await zh.unmount()
 
   await $.command.run(rings('mode minimal'))
-  const minimal = await openBand($, 'desktop')
+  const minimal = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await ringCount(minimal)).toBe(3)
   expect(await minimal.find({ type: 'Text', text: /5h|用满|本月/ })).toBe(undefined)
   expect((await minimal.find({ type: 'Text', text: '$15.24' }))?.text).toBe('$15.24')
@@ -221,7 +213,7 @@ test('/rings switches the language, the parts, the colors and the layout', async
 
   // A reset restores the look but keeps the language.
   await $.command.run(rings('reset'))
-  const back = await openBand($, 'desktop')
+  const back = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await back.find({ type: 'Text', text: '上下文' }))?.text).toBe('上下文')
   await back.unmount()
 })
@@ -244,7 +236,7 @@ test('the settings pane toggles parts and picks the layout and language', async 
       expect((await pane.find({ type: 'Text', text: group }))?.text).toBe(group)
     await pane.unmount()
 
-    const band = await openBand($, surface)
+    const band = await $.ui.mount({ ...BAND, surface })
     expect(await band.find({ type: 'Text', text: /上下文|用满/ })).toBe(undefined)
     if (surface === 'terminal') expect((await band.find({ type: 'Text', text: /5h/ }))?.text).toContain('◑ 60% ▲ 5h')
     else expect(await ringCount(band)).toBe(3)
@@ -272,7 +264,7 @@ test('the band shows the speed and cache hits of the last response', async ($, o
   }
 
   // The mocked clock stands still, so no speed: cache hits lead the card.
-  const band = await openBand($, 'desktop')
+  const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await band.find({ type: 'Text', text: '80% cache' }))?.text).toBe('80% cache')
   expect((await band.find({ type: 'Text', text: 'ttft 0.0s' }))?.text).toBe('ttft 0.0s')
   await band.unmount()
@@ -287,12 +279,12 @@ test('a terminal session starts with the band hidden, and /rings default changes
   on('ui.toast', () => ({ value: undefined }))
   await start($, on, 'terminal')
 
-  const hidden = await openBand($, 'terminal')
+  const hidden = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await hidden.find({ type: 'Text', text: /ctx/ })).toBe(undefined)
   await hidden.unmount()
 
   expect((await $.command.run(rings(''))).text).toContain('shown')
-  const shown = await openBand($, 'terminal')
+  const shown = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await shown.find({ type: 'Text', text: /ctx/ }))?.text).toContain('38% ctx')
   await shown.unmount()
 
@@ -319,6 +311,8 @@ async function ledgerSession(
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('session.id', () => ({ value: 'session-a' }))
   on('command.register', () => ({ value: { command: 'rings' } }))
+  // Usage is on by default: with no session logs given, reading them fails and says so in the debug log.
+  on('ui.log', () => ({ value: undefined as never }))
   on('session.usage', () => ({
     value: { startedAt: opts.startedAt, context: { window: 1000000 }, rateLimits: [], cost: { usd: opts.usdAtStart } },
   }))
@@ -333,7 +327,7 @@ async function ledgerSession(
       changed: ['context', 'rateLimits', 'cost'],
     })
   const totals = async () => {
-    const band = await openBand($, 'desktop')
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
     const text = (await band.find({ type: 'Text', text: /today/ }))?.text
     await band.unmount()
     return text
@@ -398,7 +392,7 @@ test('a fresh session shows the last limits saved as stale until its own reading
   const store = new Map<string, unknown>([['limits', LIMITS]])
   const { spend } = await ledgerSession($, on, store, { startedAt: NOW, usdAtStart: 0 })
 
-  const stale = await openBand($, 'desktop')
+  const stale = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const fiveHour = await svgOf(stale, '5h')
   expect(fiveHour).toContain('60%</text>')
   expect(fiveHour).toContain('stroke="#9a9a9a"')
@@ -408,13 +402,13 @@ test('a fresh session shows the last limits saved as stale until its own reading
   )
   expect((await stale.findAll({ type: 'Text', text: 'last reading' })).length).toBe(3)
   await stale.unmount()
-  const staleLine = await openBand($, 'terminal')
+  const staleLine = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await staleLine.find({ type: 'Text', text: /5h/ }))?.text).toContain('◑ 60% 5h last reading')
   await staleLine.unmount()
 
   // The session's first reading replaces it: colored, with the pace tick and the reset time.
   await spend(1)
-  const fresh = await openBand($, 'desktop')
+  const fresh = await $.ui.mount({ ...BAND, surface: 'desktop' })
   const live = await svgOf(fresh, '5h')
   expect(live).toContain('stroke="#f59e0b"')
   expect(live).toContain('<line')
@@ -463,7 +457,7 @@ async function logSession(...[$, on, logs]: [...Parameters<TestBody>, Record<str
   await start($, on)
 }
 
-test('usage: one line collapsed; opened, the second lines and two lines of detail from the session logs', async ($, on) => {
+test('usage: the band stays one line, and a ▾ at its end opens charts of the week, the hours, the mix and the projects', async ($, on) => {
   const P = '/h/.claude/projects'
   const yesterday = NOW - 86_400_000
   const big = { input: 1000, output: 1000, read: 100000, write: 10000 }
@@ -482,41 +476,67 @@ test('usage: one line collapsed; opened, the second lines and two lines of detai
     // Another project's work today, with a model that has no price here.
     [`${P}/-work-other/session-c.jsonl`]: line(logLine('c1', NOW - 120_000, 'some-other-model', small)),
   })
-  // Switched on, the part waits for its first read of the logs.
-  await $.command.run(rings('hide usage'))
-  await $.command.run(rings('show usage'))
 
-  // Collapsed: one line, each tile's first line and this chat's, this project's and today's tokens.
+  // Closed, the band is 0.7.0's one line with a ▾ at its end: no usage tile on it.
   const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  // 112k + 1k from the subagent. Project adds yesterday's 1k; today adds another project's 1k.
-  expect((await band.find({ type: 'Text', text: '113k tok' }))?.text).toBe('113k tok')
-  expect((await band.find({ type: 'Text', text: 'this chat · project 114k · today 114k' }))?.text).toBe(
-    'this chat · project 114k · today 114k',
-  )
-  for (const hidden of [/4h22m/, /all: today/, /Cost:/]) expect(await band.find({ type: 'Text', text: hidden })).toBe(undefined)
+  expect(await band.find({ type: 'Text', text: /tok$/ })).toBe(undefined)
+  // The tiles keep their second lines, and the rings their size.
+  expect((await band.find({ type: 'Text', text: '4h22m' }))?.text).toBe('4h22m')
+  expect((await band.find({ type: 'Text', text: 'all: today $15.24 · mo $15.24' }))?.text).toBe('all: today $15.24 · mo $15.24')
+  expect((await band.findAll({ type: 'Svg' })).every(s => s.props.width === 32 || s.props.alt === 'dev')).toBe(true)
+  expect((await band.find({ type: 'Button' }))?.text).toBe('▾')
+  expect((await band.findAll({ type: 'Svg' })).some(x => String(x.props.alt).endsWith('chart'))).toBe(false)
 
+  // ▾ opens the tiles for each scope, with rings, and the four charts; ▴ closes them.
+  // 112k + 1k from the subagent. Project adds yesterday's 1k; today adds another project's 1k.
   await band.press({ key: 'usage-toggle' })
+  expect((await band.find({ type: 'Button' }))?.text).toBe('▴')
+  expect((await band.find({ type: 'Text', text: '113k tok' }))?.props.weight).toBe('semibold')
+  expect((await band.find({ type: 'Text', text: '114k tok' }))?.text).toBe('114k tok')
+  expect((await band.find({ type: 'Text', text: 'chat · 90% cache · 2 replies' }))?.text).toBe('chat · 90% cache · 2 replies')
+  expect((await band.find({ type: 'Text', text: /^today · 99% of 7 days · 2 chats$/ }))?.text).toBeDefined()
+  const charts = (await band.findAll({ type: 'Svg' })).filter(x => String(x.props.alt).endsWith('chart'))
+  expect(charts.map(x => x.props.alt)).toEqual([
+    'Last 7 days chart',
+    'Today by hour chart',
+    "Today's mix chart",
+    'Projects · 7 days chart',
+  ])
+  expect(charts.every(x => x.props.isInteractive === true)).toBe(true)
+  const projects = String(charts[3]?.props.source)
+  // This project in the accent, named by its log folder until a line gives its folder.
+  expect(projects).toContain('>work-app</text>')
+  expect(projects).toContain('>work-other</text>')
+  expect(String(charts[2]?.props.source)).toContain('89% cache hit')
+  expect(String(charts[0]?.props.source)).toContain('<title>')
+  await band.press({ key: 'usage-toggle' })
+  expect((await band.find({ type: 'Button' }))?.text).toBe('▾')
+  expect(await band.find({ type: 'Text', text: /replies/ })).toBe(undefined)
   await band.unmount()
-  const open = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  // The second lines are back, and two lines of detail follow, none of it repeating the first line.
-  expect((await open.find({ type: 'Text', text: '4h22m' }))?.text).toBe('4h22m')
+
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await terminal.find({ type: 'Text', text: /ctx/ }))?.text).not.toContain('tok')
+  await terminal.press({ key: 'usage-toggle' })
+  expect((await terminal.find({ type: 'Text', text: /^ {2}113k \$15\.24 chat/ }))?.text).toBeDefined()
+  expect((await terminal.find({ type: 'Text', text: /^ {2}7d / }))?.text).toMatch(/115k tok \$0\.14\+ · avg 16k\/day$/)
+  expect((await terminal.find({ type: 'Text', text: /^ {2}top / }))?.text).toContain('▸work-app 114k')
+  await terminal.press({ key: 'usage-toggle' })
+  await terminal.unmount()
+
+  await $.command.run(rings('mode minimal'))
+  const minimal = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await minimal.find({ type: 'Button' }))?.text).toBe('▾')
+  expect(await minimal.find({ type: 'Text', text: /project/ })).toBe(undefined)
+  await minimal.unmount()
+
   // Opus 5.5: 1k in $0.004, 1k out $0.02, 100k read $0.02, 10k 1h write $0.08; Sonnet 5.5 subagent 0.5k/0.5k $0.006.
   // Project: + yesterday's $0.012. Today and the week: + an unpriced response, so marked.
-  expect((await open.find({ type: 'Text', text: /^Cost:/ }))?.text).toBe(
-    'Cost: project $0.14 · today $0.13+ · last 7 days 115k tok, $0.14+',
+  // The chat's cost is Claude Code's own, the spend tile's.
+  expect((await $.command.run(rings('usage'))).text).toBe(
+    [
+      'Tokens: chat 113k · project 114k · today 114k · last 7 days 115k',
+      'Cost: chat $15.24 · project $0.14 · today $0.13+ · last 7 days $0.14+',
+      'Today: input 112k, 89% from cache · output 2k · Opus 5.5 98% · Sonnet 5.5 1% · other 1%',
+    ].join('\n'),
   )
-  // Today's input: 2k fresh, 100k from cache, 10k written to it.
-  expect((await open.find({ type: 'Text', text: /^Today:/ }))?.text).toBe(
-    'Today: input 112k, 89% from cache · output 2k · Opus 5.5 98% · Sonnet 5.5 1% · other 1%',
-  )
-  await open.unmount()
-
-  const opened = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await opened.find({ type: 'Text', text: /Cost:/ }))?.text).toContain('Cost: project $0.14')
-  await opened.press({ key: 'usage-toggle' })
-  await opened.unmount()
-  const closed = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await closed.find({ type: 'Text', text: /113k tok/ }))?.text).toContain('113k tok this chat · project 114k · today 114k')
-  expect(await closed.find({ type: 'Text', text: /Cost:/ })).toBe(undefined)
-  await closed.unmount()
 })

@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { UsageBook, UsageFigure, UsageMix } from '../types'
+import type { UsageBook, UsageDay, UsageFigure, UsageMix, UsageProject } from '../types'
 
 // Token and cost totals for this conversation, its project folder, today and the last seven days, read from the
 // session logs Claude Code keeps under <config>/projects, the way Token Monitor counts them.
@@ -35,18 +35,22 @@ type Rec = {
   write: number
   tokens: number
   usd: number | undefined
+  // What the cache reads saved against paying for them as fresh input.
+  saved: number
 }
 // What a log file held when last read, and how far: logs only grow, so a file that grew past
 // what `$.fs.read` takes is read on from `offset`.
-type FileScan = { stamp: string; offset: number; recs: Rec[]; isPartial: boolean }
+// `cwd` is the folder the session ran in, as its lines record it: what names the project.
+type FileScan = { stamp: string; offset: number; recs: Rec[]; isPartial: boolean; cwd?: string }
 
 const MAX_READ = 4 * 1024 * 1024
 const files = new Map<string, FileScan>()
 const utf8 = new TextEncoder()
 
+const priceOf = (model: string) => PRICES.find(([re]) => re.test(model.replace(/^.*?(?=claude-)/, '')))
 const usdOf = (model: string, input: number, output: number, read: number, write5m: number, write1h: number, isFast: boolean) => {
   const id = model.replace(/^.*?(?=claude-)/, '')
-  const price = PRICES.find(([re]) => re.test(id))
+  const price = priceOf(id)
   if (!price) return undefined
   const [, inRate, outRate, readRate] = price
   const long = /^claude-haiku-5-5/.test(id) && input + read + write5m + write1h > HAIKU_LONG ? 5 : 1
@@ -109,6 +113,10 @@ const recOf = (line: string, at: string): Rec | undefined => {
     write,
     tokens,
     usd: usdOf(model, input, output, read, write - write1h, write1h, u.speed === 'fast'),
+    saved: (() => {
+      const price = priceOf(model)
+      return price ? (read * (price[1] - price[3])) / 1e6 : 0
+    })(),
   }
 }
 
@@ -118,7 +126,7 @@ export type Idle = () => Promise<void>
 
 // Each whole line of `text` read into `recs`; what follows the last newline is not yet a line.
 // Every few hundred lines it hands the engine a turn, and waits while a response streams in.
-async function readLines($: EngineInterface, idle: Idle, text: string, recs: Rec[], where: string) {
+async function readLines($: EngineInterface, idle: Idle, text: string, recs: Rec[], where: string, seen: { cwd?: string }) {
   const end = text.lastIndexOf('\n')
   const lines = end < 0 ? [] : text.slice(0, end).split('\n')
   for (let i = 0; i < lines.length; i++) {
@@ -126,7 +134,9 @@ async function readLines($: EngineInterface, idle: Idle, text: string, recs: Rec
       await idle()
       await $.clock.now()
     }
-    const rec = recOf(lines[i] ?? '', `${where}:${i}`)
+    const line = lines[i] ?? ''
+    seen.cwd ??= field(line, 'cwd')?.replace(/\\\\/g, '\\')
+    const rec = recOf(line, `${where}:${i}`)
     if (rec) recs.push(rec)
   }
   return end < 0 ? '' : text.slice(0, end + 1)
@@ -139,9 +149,10 @@ async function scanFile($: EngineInterface, idle: Idle, path: string, size: numb
   let scan: FileScan
   if (size <= MAX_READ) {
     const recs: Rec[] = []
+    const seen: { cwd?: string } = {}
     try {
-      const used = await readLines($, idle, await $.fs.read(path), recs, path)
-      scan = { stamp, offset: utf8.encode(used).length, recs, isPartial: false }
+      const used = await readLines($, idle, await $.fs.read(path), recs, path, seen)
+      scan = { stamp, offset: utf8.encode(used).length, recs, isPartial: false, cwd: seen.cwd }
     } catch {
       scan = { stamp, offset: 0, recs: [], isPartial: true }
     }
@@ -152,17 +163,18 @@ async function scanFile($: EngineInterface, idle: Idle, path: string, size: numb
     let offset = from
     let carry = ''
     let isPartial = false
+    const seen: { cwd?: string } = { cwd: from > 0 ? kept?.cwd : undefined }
     try {
       for await (const piece of $.process.spawn({ argv: ['tail', '-c', `+${from + 1}`, path] })) {
         if (piece.stream !== 'stdout') continue
-        const used = await readLines($, idle, carry + piece.text, recs, `${path}@${offset}`)
+        const used = await readLines($, idle, carry + piece.text, recs, `${path}@${offset}`, seen)
         offset += utf8.encode(used).length
         carry = (carry + piece.text).slice(used.length)
       }
     } catch {
       isPartial = true
     }
-    scan = { stamp, offset, recs, isPartial }
+    scan = { stamp, offset, recs, isPartial, cwd: seen.cwd }
   }
   files.set(path, scan)
   return scan
@@ -189,13 +201,16 @@ const localDayStart = (t: number, daysBack = 0) => {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysBack).getTime()
 }
 
-type Sum = { figure: UsageFigure; seen: Set<string>; mix?: UsageMix; byModel?: Map<string, number> }
+type Sum = { figure: UsageFigure; seen: Set<string>; mix?: UsageMix; byModel?: Map<string, { tokens: number; usd: number }> }
 const newSum = (withMix = false): Sum => ({
   figure: { tokens: 0, usd: 0, isPartial: false, hasUnpriced: false },
   seen: new Set(),
-  ...(withMix ? { mix: { input: 0, output: 0, read: 0, write: 0, models: [] }, byModel: new Map() } : {}),
+  ...(withMix
+    ? { mix: { input: 0, output: 0, read: 0, write: 0, savedUsd: 0, responses: 0, models: [] }, byModel: new Map() }
+    : {}),
 })
-const add = (sum: Sum, scan: FileScan, keep: (r: Rec) => boolean) => {
+// Adds each response `keep` takes and the sum has not counted yet; `each` sees every one it adds.
+const add = (sum: Sum, scan: FileScan, keep: (r: Rec) => boolean, each?: (r: Rec) => void) => {
   if (scan.isPartial) sum.figure.isPartial = true
   for (const r of scan.recs) {
     if (!keep(r) || sum.seen.has(r.key)) continue
@@ -208,10 +223,20 @@ const add = (sum: Sum, scan: FileScan, keep: (r: Rec) => boolean) => {
       sum.mix.output += r.output
       sum.mix.read += r.read
       sum.mix.write += r.write
-      sum.byModel.set(r.model, (sum.byModel.get(r.model) ?? 0) + r.tokens)
+      sum.mix.savedUsd += r.saved
+      sum.mix.responses++
+      const m = sum.byModel.get(r.model) ?? { tokens: 0, usd: 0 }
+      sum.byModel.set(r.model, { tokens: m.tokens + r.tokens, usd: m.usd + (r.usd ?? 0) })
     }
+    each?.(r)
   }
 }
+const mixOf = (sum: Sum): UsageMix => {
+  const mix = sum.mix ?? { input: 0, output: 0, read: 0, write: 0, savedUsd: 0, responses: 0, models: [] }
+  mix.models = [...(sum.byModel ?? [])].map(([id, m]) => ({ id, ...m })).sort((a, b) => b.tokens - a.tokens)
+  return mix
+}
+const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
 
 // The session's log is `<project>/<session id>.jsonl`, its subagents' under
 // `<project>/<session id>/subagents/`. The project folder is the one that holds the session's log,
@@ -227,10 +252,17 @@ export async function scanUsage(
   if (!base) return undefined
   const dayStart = localDayStart(now)
   const weekStart = localDayStart(now, 6)
-  const session = newSum()
+  const hourAgo = now - 3_600_000
+  const session = newSum(true)
   const project = newSum()
   const today = newSum(true)
   const week = newSum()
+  const hour = newSum()
+  // The week day by day, oldest first; today hour by hour; and every project's week.
+  const days: UsageDay[] = Array.from({ length: 7 }, (_, i) => ({ start: localDayStart(now, 6 - i), tokens: 0, usd: 0 }))
+  const hours = Array.from({ length: 24 }, () => 0)
+  const projects = new Map<string, UsageProject>()
+  const chats = new Set<string>()
   let found = false
   for (const dir of await list($, base)) {
     if (dir.kind !== 'dir') continue
@@ -252,16 +284,45 @@ export async function scanUsage(
         }
       }
     }
+    const scans: FileScan[] = []
     for (const log of logs) {
       const scan = await scanFile($, idle, log.file, log.size, log.mtimeMs)
+      scans.push(scan)
       if (isProject) add(project, scan, () => true)
       if (isProject && log.owner === sessionId) add(session, scan, () => true)
-      add(today, scan, r => r.at >= dayStart)
-      add(week, scan, r => r.at >= weekStart)
+      add(today, scan, r => r.at >= dayStart, r => {
+        hours[new Date(r.at).getHours()]! += r.tokens
+        chats.add(log.owner)
+      })
+      add(hour, scan, r => r.at >= hourAgo)
     }
+    // The project's name is the folder its sessions ran in; its log folder's name stands in before one is read.
+    const name = baseName(scans.find(x => x.cwd)?.cwd ?? dir.name.replace(/^-+/, ''))
+    const mine: UsageProject = { name, tokens: 0, usd: 0, isThis: isProject }
+    for (const scan of scans)
+      add(week, scan, r => r.at >= weekStart, r => {
+        const day = [...days].reverse().find(d => r.at >= d.start)
+        if (day) {
+          day.tokens += r.tokens
+          day.usd += r.usd ?? 0
+        }
+        mine.tokens += r.tokens
+        mine.usd += r.usd ?? 0
+      })
+    if (mine.tokens > 0) projects.set(dir.name, mine)
   }
   if (!found) return undefined
-  const mix = today.mix ?? { input: 0, output: 0, read: 0, write: 0, models: [] }
-  mix.models = [...(today.byModel ?? [])].map(([id, tokens]) => ({ id, tokens })).sort((a, b) => b.tokens - a.tokens)
-  return { session: session.figure, project: project.figure, today: today.figure, week: week.figure, mix }
+  return {
+    session: session.figure,
+    project: project.figure,
+    today: today.figure,
+    week: week.figure,
+    hour: hour.figure,
+    mix: mixOf(today),
+    chatMix: mixOf(session),
+    days,
+    hours,
+    projects: [...projects.values()].sort((a, b) => b.tokens - a.tokens).slice(0, 5),
+    chats: chats.size,
+  }
 }

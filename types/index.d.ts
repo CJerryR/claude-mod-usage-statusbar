@@ -18,14 +18,38 @@ export type Ledger = { day: string; dayUsd: number; month: string; monthUsd: num
 // Tokens and cost from the session logs: partial when a log could not be read; the cost leaves
 // out responses from a model with no known price.
 export type UsageFigure = { tokens: number; usd: number; isPartial: boolean; hasUnpriced: boolean }
-// Today's tokens by kind, and by model, largest first.
-export type UsageMix = { input: number; output: number; read: number; write: number; models: { id: string; tokens: number }[] }
+// Tokens by kind, what cache reads saved at list price, how many responses, and the tokens and
+// cost by model, largest first.
+export type UsageMix = {
+  input: number
+  output: number
+  read: number
+  write: number
+  savedUsd: number
+  responses: number
+  models: { id: string; tokens: number; usd: number }[]
+}
+// One day of the week: its local midnight, and what every project used on it.
+export type UsageDay = { start: number; tokens: number; usd: number }
+// A project folder's last 7 days; `isThis` marks this session's.
+export type UsageProject = { name: string; tokens: number; usd: number; isThis: boolean }
 export type UsageBook = {
   session: UsageFigure
   project: UsageFigure
   today: UsageFigure
   week: UsageFigure
+  // The last 60 minutes, every project.
+  hour: UsageFigure
+  // Today's mix, every project; and this chat's.
   mix: UsageMix
+  chatMix: UsageMix
+  days: UsageDay[]
+  // Today's tokens by local hour, 0-23.
+  hours: number[]
+  // The busiest project folders of the last 7 days, at most five.
+  projects: UsageProject[]
+  // How many sessions (their subagents with them) worked today.
+  chats: number
   day: string
 }
 
@@ -95,7 +119,7 @@ declare module 'claude-code' {
       own: Ledger | null
       // This conversation's, its project folder's and today's usage, from the session logs.
       usage: UsageBook | null
-      // Whether the band is opened: every tile's second line, and the usage detail below.
+      // Whether the band's ▾ has opened the usage charts below it.
       isUsageOpen: boolean
     }
   }

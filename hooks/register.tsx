@@ -3,6 +3,7 @@ import type { EngineInterface, Register, SessionUsage, Timer } from 'claude-code
 
 import type {
   CtxBasis,
+  Lang,
   Ledger,
   Limit,
   Mode,
@@ -16,6 +17,8 @@ import type {
   UsageBook,
   UsageFigure,
 } from '../types'
+import type { ChartWords } from './charts'
+import { hourChart, mixChart, modelName, projectChart, shareBar, sparkline, weekChart } from './charts'
 import { scanUsage } from './usage'
 
 const PART_IDS: Part[] = [
@@ -111,11 +114,45 @@ const TEXT = {
     cache: (p: number) => `${p}% cache`,
     ttft: (s: string) => `ttft ${s}s`,
     usageLead: (tok: string) => `${tok} tok`,
-    usageRest: (project: string, today: string) => `this chat · project ${project} · today ${today}`,
-    usageCosts: (project: string, today: string, weekTok: string, weekUsd: string) =>
-      `Cost: project ${project} · today ${today} · last 7 days ${weekTok} tok, ${weekUsd}`,
+    usageLabel: 'chat',
+    usageTokens: (chat: string, project: string, today: string, week: string) =>
+      `Tokens: chat ${chat} · project ${project} · today ${today} · last 7 days ${week}`,
+    usageCosts: (chat: string, project: string, today: string, week: string) =>
+      `Cost: chat ${chat} · project ${project} · today ${today} · last 7 days ${week}`,
     usageMix: (input: string, hit: number, output: string) => `Today: input ${input}, ${hit}% from cache · output ${output}`,
     otherModels: (p: number) => `other ${p}%`,
+    usageOff: 'The usage part is off: /rings show usage turns it on.',
+    open: 'Open the usage charts',
+    close: 'Close the usage charts',
+    tileChat: (hit: number, replies: number) => `chat · ${hit}% cache · ${replies} replies`,
+    tileProject: (p: number) => `project · ${p}% of 7 days`,
+    tileToday: (p: number, chats: number) => `today · ${p}% of 7 days · ${chats} chats`,
+    tileWeek: (avg: string) => `last 7 days · ${avg}/day`,
+    tileHour: (saved: string) => `last hour · cache saved ${saved} today`,
+    ringChat: (p: number) => `This chat: ${p}% of its input read from cache`,
+    ringShare: (what: string, p: number) => `${what}: ${p}% of the last 7 days' tokens`,
+    charts: {
+      week: 'Last 7 days',
+      byHour: 'Today by hour',
+      mix: "Today's mix",
+      projects: 'Projects · 7 days',
+      weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      kinds: { read: 'cache read', write: 'cache write', input: 'input', output: 'output' },
+      cacheHit: (p: number) => `${p}% cache hit`,
+      avg: (v: string) => `avg ${v}/day`,
+      now: (v: string) => `${v} last hour`,
+      peak: (h: number) => `peak ${String(h).padStart(2, '0')}:00`,
+      active: (n: number) => `${n} active`,
+      replies: (n: number, saved: string) => `${n} replies · cache saved ${saved}`,
+      other: 'other',
+      none: 'nothing yet',
+    } as ChartWords,
+    chartAlt: (what: string) => `${what} chart`,
+    termWeek: (bars: string, tok: string, usd: string, avg: string) => `7d   ${bars}  ${tok} tok ${usd} · avg ${avg}/day`,
+    termHour: (bars: string, hour: string) => `24h  ${bars}  ${hour} last hour`,
+    termMix: (bar: string, hit: number, out: number, saved: string) => `mix  ${bar}  ${hit}% cache · ${out}% output · saved ${saved}`,
+    termTop: (list: string) => `top  ${list}`,
+    usageNone: 'The session logs have not been read yet; try again in a moment.',
     paneTitle: 'Usage rings',
     layout: 'Layout',
     modes: { tiles: 'Tiles', minimal: 'Minimal' } as Record<Mode, string>,
@@ -167,7 +204,7 @@ const TEXT = {
       `New ${surface} sessions start with the band ${on ? 'shown' : 'hidden'}. This session is unchanged; /rings toggles it.`,
     help: (parts: string, themes: string, slots: string) =>
       [
-        'Usage: /rings [settings | mode tiles|minimal | lang en|zh | scope all|session | ctx compact|model | show <parts> | hide <parts> | theme <name> | color <slot> <#hex|reset> | default desktop|terminal on|off | reset]',
+        'Usage: /rings [settings | usage | mode tiles|minimal | lang en|zh | scope all|session | ctx compact|model | show <parts> | hide <parts> | theme <name> | color <slot> <#hex|reset> | default desktop|terminal on|off | reset]',
         `Parts: ${parts}, all`,
         `Themes: ${themes}`,
         `Color slots: ${slots}`,
@@ -217,11 +254,45 @@ const TEXT = {
     cache: (p: number) => `缓存 ${p}%`,
     ttft: (s: string) => `首 token ${s}s`,
     usageLead: (tok: string) => `${tok} token`,
-    usageRest: (project: string, today: string) => `本对话 · 项目 ${project} · 今天 ${today}`,
-    usageCosts: (project: string, today: string, weekTok: string, weekUsd: string) =>
-      `花费：项目 ${project} · 今天 ${today} · 近 7 天 ${weekTok} token，${weekUsd}`,
-    usageMix: (input: string, hit: number, output: string) => `今天：输入 ${input}，${hit}% 命中缓存 · 输出 ${output}`,
+    usageLabel: '本对话',
+    usageTokens: (chat: string, project: string, today: string, week: string) =>
+      `token：本对话 ${chat} · 项目 ${project} · 今日 ${today} · 近 7 天 ${week}`,
+    usageCosts: (chat: string, project: string, today: string, week: string) =>
+      `花费：本对话 ${chat} · 项目 ${project} · 今日 ${today} · 近 7 天 ${week}`,
+    usageMix: (input: string, hit: number, output: string) => `今日：输入 ${input}，${hit}% 命中缓存 · 输出 ${output}`,
     otherModels: (p: number) => `其他 ${p}%`,
+    usageOff: '用量组件已关闭：/rings show usage 可打开。',
+    open: '展开用量图表',
+    close: '收起用量图表',
+    tileChat: (hit: number, replies: number) => `本对话 · 缓存 ${hit}% · ${replies} 次回复`,
+    tileProject: (p: number) => `项目 · 占近 7 天 ${p}%`,
+    tileToday: (p: number, chats: number) => `今日 · 占近 7 天 ${p}% · ${chats} 个会话`,
+    tileWeek: (avg: string) => `近 7 天 · 日均 ${avg}`,
+    tileHour: (saved: string) => `近 1 小时 · 今日缓存省 ${saved}`,
+    ringChat: (p: number) => `本对话：${p}% 的输入命中缓存`,
+    ringShare: (what: string, p: number) => `${what}：占近 7 天 token 的 ${p}%`,
+    charts: {
+      week: '近 7 天',
+      byHour: '今日每小时',
+      mix: '今日构成',
+      projects: '项目 · 近 7 天',
+      weekdays: ['日', '一', '二', '三', '四', '五', '六'],
+      kinds: { read: '缓存读', write: '缓存写', input: '输入', output: '输出' },
+      cacheHit: (p: number) => `缓存命中 ${p}%`,
+      avg: (v: string) => `日均 ${v}`,
+      now: (v: string) => `近 1 小时 ${v}`,
+      peak: (h: number) => `高峰 ${String(h).padStart(2, '0')}:00`,
+      active: (n: number) => `${n} 个活跃`,
+      replies: (n: number, saved: string) => `${n} 次回复 · 缓存省 ${saved}`,
+      other: '其他',
+      none: '暂无数据',
+    } as ChartWords,
+    chartAlt: (what: string) => `${what}图表`,
+    termWeek: (bars: string, tok: string, usd: string, avg: string) => `7天  ${bars}  ${tok} token ${usd} · 日均 ${avg}`,
+    termHour: (bars: string, hour: string) => `24h  ${bars}  近 1 小时 ${hour}`,
+    termMix: (bar: string, hit: number, out: number, saved: string) => `构成 ${bar}  缓存 ${hit}% · 输出 ${out}% · 省 ${saved}`,
+    termTop: (list: string) => `项目 ${list}`,
+    usageNone: '会话日志尚未读完，请稍后再试。',
     paneTitle: '用量圆环',
     layout: '布局',
     modes: { tiles: '双行小卡', minimal: '极简' } as Record<Mode, string>,
@@ -271,7 +342,7 @@ const TEXT = {
       `${surface}新会话默认${on ? '显示' : '隐藏'}面板。当前会话不变，可用 /rings 切换。`,
     help: (parts: string, themes: string, slots: string) =>
       [
-        '用法：/rings [settings | mode tiles|minimal | lang en|zh | scope all|session | ctx compact|model | show <组件> | hide <组件> | theme <名称> | color <槽> <#hex|reset> | default desktop|terminal on|off | reset]',
+        '用法：/rings [settings | usage | mode tiles|minimal | lang en|zh | scope all|session | ctx compact|model | show <组件> | hide <组件> | theme <名称> | color <槽> <#hex|reset> | default desktop|terminal on|off | reset]',
         `组件：${parts}、all`,
         `主题：${themes}`,
         `颜色槽：${slots}`,
@@ -364,13 +435,31 @@ const span = (ms: number) => {
 const tokens = (n: number) =>
   n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`
 
-// `claude-opus-5-5` as `Opus 5.5`, `claude-3-5-haiku-20241022` as `Haiku 3.5`; any other id as is.
-const modelName = (id: string) => {
-  if (!id.startsWith('claude-')) return id || '?'
-  const parts = id.slice('claude-'.length).split('-').filter(p => !/^\d{8}$/.test(p))
-  const family = parts.find(p => /^[a-z]+$/.test(p))
-  const version = parts.filter(p => /^\d+$/.test(p)).join('.')
-  return family ? `${family[0]?.toUpperCase()}${family.slice(1)}${version ? ` ${version}` : ''}` : id
+// A usage figure, marked `+` when a log could not be read; a cost also when a model has no known price.
+const tokOf = (f: UsageFigure) => `${tokens(f.tokens)}${f.isPartial ? '+' : ''}`
+const usdOf = (f: UsageFigure) => `${money(f.usd)}${f.isPartial || f.hasUnpriced ? '+' : ''}`
+
+// What /rings usage prints: every scope's tokens and cost, then today's mix by kind and by model.
+function usageReport(book: UsageBook, chatUsd: number | undefined, w: (typeof TEXT)[Lang]) {
+  const m = book.mix
+  const input = m.input + m.read + m.write
+  const share = (n: number) => (book.today.tokens > 0 ? Math.round((n / book.today.tokens) * 100) : 0)
+  const top = m.models.slice(0, 2).filter(x => share(x.tokens) > 0)
+  const rest = m.models.slice(2).reduce((n, x) => n + x.tokens, 0)
+  const models = [
+    ...top.map(x => `${modelName(x.id)} ${share(x.tokens)}%`),
+    ...(share(rest) > 0 ? [w.otherModels(share(rest))] : []),
+  ]
+  return [
+    w.usageTokens(tokOf(book.session), tokOf(book.project), tokOf(book.today), tokOf(book.week)),
+    w.usageCosts(
+      chatUsd === undefined ? usdOf(book.session) : money(chatUsd),
+      usdOf(book.project),
+      usdOf(book.today),
+      usdOf(book.week),
+    ),
+    [w.usageMix(tokens(input), input > 0 ? Math.round((m.read / input) * 100) : 0, tokens(m.output)), ...models].join(' · '),
+  ].join('\n')
 }
 
 const isLedger = (v: unknown): v is Ledger =>
@@ -683,6 +772,12 @@ async function runCommand($: EngineInterface, args: string): Promise<string> {
     const opened = await $.ui.open({ id: PANE, title: w.paneTitle, focus: true })
     return opened.isPlaced ? w.opened : w.notOpened(String(opened.reason))
   }
+  if (verb === 'usage') {
+    if (!(await read($, settings)).parts.usage) return w.usageOff
+    await refreshUsage($, true)
+    const book = await read($, usage)
+    return book ? usageReport(book, (await read($, snapshot))?.sessionUsd, w) : w.usageNone
+  }
   if (verb === 'mode') {
     const mode = rest[0]
     if (mode !== 'tiles' && mode !== 'minimal') return w.modeHelp
@@ -751,7 +846,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'rings',
       description: 'Hide or show the usage rings in this session; /rings settings to configure them',
-      argumentHint: '[settings | mode | lang | scope | ctx | show | hide | theme | color | default | reset]',
+      argumentHint: '[settings | usage | mode | lang | scope | ctx | show | hide | theme | color | default | reset]',
     })
 
     const usage = await $.session.usage()
@@ -1111,52 +1206,82 @@ export const register: Register = on => {
       speed.push({ key: 'speed', text: `${flow.isStreaming && flow.live !== undefined ? '~' : ''}${Math.round(speedNow)} tok/s` })
     if (show.cache && flow.cacheHit !== undefined) speed.push({ key: 'cache', text: w.cache(Math.round(flow.cacheHit)) })
     if (show.ttft && flow.ttftMs !== undefined) speed.push({ key: 'ttft', text: w.ttft((flow.ttftMs / 1000).toFixed(1)) })
+    // Usage has no tile on the band, which stays one line: its figures are in the panel ▾ opens.
+    const used = show.usage ? await read($, usage) : null
+    // A book an older version kept in this session's state has no series yet: read again soon.
+    const tally = used?.day === today && Array.isArray(used.days) ? used : null
     const cards = [spend, speed].filter(c => c.length > 0)
 
-    // Collapsed, the band is one line: each tile's first line. Opened, every tile has its second
-    // line again, and two lines of usage detail follow.
-    const isOpen = await read($, isUsageOpen)
-    const isTwoLine = isOpen && !isMinimal
-    const used = show.usage ? await read($, usage) : null
-    const book2 = used?.day === today && used.week ? used : null
-    const mark = (f: UsageFigure) => (f.isPartial ? '+' : '')
-    const usdMark = (f: UsageFigure) => (f.isPartial || f.hasUnpriced ? '+' : '')
-    const tok = (f: UsageFigure) => `${tokens(f.tokens)}${mark(f)}`
-    const cost = (f: UsageFigure) => `${money(f.usd)}${usdMark(f)}`
-    const usageLead = show.usage ? w.usageLead(book2 ? tok(book2.session) : '–') : undefined
-    const usageRest = book2 ? w.usageRest(tok(book2.project), tok(book2.today)) : undefined
-    const usageDetail = (() => {
-      if (!book2 || !isOpen) return []
-      const m = book2.mix
-      const input = m.input + m.read + m.write
-      const share = (n: number) => (book2.today.tokens > 0 ? Math.round((n / book2.today.tokens) * 100) : 0)
-      const top = m.models.slice(0, 2).filter(x => share(x.tokens) > 0)
-      const rest = m.models.slice(2).reduce((n, x) => n + x.tokens, 0)
-      const models = [
-        ...top.map(x => `${modelName(x.id)} ${share(x.tokens)}%`),
-        ...(share(rest) > 0 ? [w.otherModels(share(rest))] : []),
-      ]
-      return [
-        w.usageCosts(cost(book2.project), cost(book2.today), tok(book2.week), cost(book2.week)),
-        [w.usageMix(tokens(input), input > 0 ? Math.round((m.read / input) * 100) : 0, tokens(m.output)), ...models].join(' · '),
-      ]
-    })()
-    const toggle = () => void update($, isUsageOpen, o => !o)
-
-    if (gauges.length === 0 && cards.length === 0 && !usageLead) return next(e)
+    if (gauges.length === 0 && cards.length === 0) return next(e)
 
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
     const isDev = isDevRoot($.plugin.root)
-    const toggleButton = <Button key="usage-toggle" label={isOpen ? '▴' : '▾'} plain dimColor onPress={toggle} />
+
+    // The ▾ at the band's end opens the usage charts below it; ▴ closes them.
+    const isOpen = show.usage && (await read($, isUsageOpen))
+    const panel = isOpen && tally ? tally : null
+    const toggle = show.usage ? (
+      <Button
+        key="usage-toggle"
+        label={isOpen ? '▴' : '▾'}
+        plain
+        dimColor
+        onPress={() => {
+          void update($, isUsageOpen, o => !o)
+          void refreshUsage($)
+        }}
+      />
+    ) : null
+    // What the opened panel's tiles say: each scope's tokens and cost, and what share it is.
+    const chatUsd = snap.sessionUsd
+    const hitOf = (m: UsageBook['mix']) => {
+      const input = m.input + m.read + m.write
+      return input > 0 ? Math.round((m.read / input) * 100) : 0
+    }
+    const shareOf = (n: number) => (panel && panel.week.tokens > 0 ? Math.round((n / panel.week.tokens) * 100) : 0)
+    const savedToday = panel ? money(panel.mix.savedUsd) : ''
+    const avgDay = panel ? tokens(Math.round(panel.week.tokens / 7)) : ''
+    type Tile = { key: string; tok: string; usd: string; usdColor?: string; foot: string; ring?: { percent: number; alt: string } }
+    const tiles: Tile[] = panel
+      ? [
+          {
+            key: 'chat',
+            tok: tokOf(panel.session),
+            usd: chatUsd === undefined ? usdOf(panel.session) : money(chatUsd),
+            usdColor: palette.accent,
+            foot: w.tileChat(hitOf(panel.chatMix), panel.chatMix.responses),
+            ring: { percent: hitOf(panel.chatMix), alt: w.ringChat(hitOf(panel.chatMix)) },
+          },
+          {
+            key: 'project',
+            tok: tokOf(panel.project),
+            usd: usdOf(panel.project),
+            foot: w.tileProject(shareOf(panel.projects.find(x => x.isThis)?.tokens ?? 0)),
+            ring: {
+              percent: shareOf(panel.projects.find(x => x.isThis)?.tokens ?? 0),
+              alt: w.ringShare(w.usageLabel, shareOf(panel.projects.find(x => x.isThis)?.tokens ?? 0)),
+            },
+          },
+          {
+            key: 'today',
+            tok: tokOf(panel.today),
+            usd: usdOf(panel.today),
+            foot: w.tileToday(shareOf(panel.today.tokens), panel.chats),
+            ring: { percent: shareOf(panel.today.tokens), alt: w.ringShare(w.today(''), shareOf(panel.today.tokens)) },
+          },
+          { key: 'week', tok: tokOf(panel.week), usd: usdOf(panel.week), foot: w.tileWeek(avgDay) },
+          { key: 'hour', tok: tokOf(panel.hour), usd: `${usdOf(panel.hour)}/h`, foot: w.tileHour(savedToday) },
+        ]
+      : []
 
     if (e.surface !== 'terminal' && 'Svg' in ui) {
       const { Svg } = ui
-      const size = isMinimal ? 28 : isTwoLine ? 32 : 24
+      const size = isMinimal ? 28 : 32
       const band = (
-        <Box flexDirection="row" flexWrap="wrap" columnGap={3} rowGap={1} alignItems="center" flexGrow={1} flexShrink={1}>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1} alignItems="center" flexGrow={1} flexShrink={1}>
           {gauges.map(g => {
-            const below = isTwoLine ? secondLine(g) : undefined
+            const below = secondLine(g)
             const svg = (
               <Svg
                 source={ring(g.percent, colorOf(g), palette, show.pace ? g.elapsed : undefined)}
@@ -1195,7 +1320,7 @@ export const register: Register = on => {
                     {lead.text}
                   </Text>
                 )}
-                {isTwoLine && rest.length > 0 ? (
+                {!isMinimal && rest.length > 0 ? (
                   <Text size="footnote" dimColor tabular>
                     {rest.map(f => f.text).join(' · ')}
                   </Text>
@@ -1203,42 +1328,60 @@ export const register: Register = on => {
               </Box>
             ),
           )}
-          {usageLead ? (
-            <Box key="card-usage" flexDirection="row" gap={1}>
-              <Text weight="semibold" tabular>
-                {usageLead}
-              </Text>
-              {!isMinimal && usageRest ? (
-                <Text dimColor tabular>
-                  {usageRest}
-                </Text>
-              ) : null}
-            </Box>
-          ) : null}
-          {toggleButton}
         </Box>
       )
-      const body =
-        usageDetail.length > 0 ? (
-          <Box flexDirection="column" gap={1} flexGrow={1} flexShrink={1}>
-            {band}
-            <Box key="usage-detail" flexDirection="column">
-              {usageDetail.map((text, i) => (
-                <Text key={`usage-detail-${i}`} size="footnote" dimColor tabular>
-                  {text}
-                </Text>
-              ))}
+      // The band's one line, the dev tag and the ▾ stacked at its right end: side by side they
+      // took enough of the line to push its last tile onto a second.
+      const head = (
+        <Box flexDirection="row" alignItems="center" justifyContent="space-between" width="100%" gap={1}>
+          {band}
+          {toggle || isDev ? (
+            <Box key="ends" flexDirection="column" flexShrink={0} alignSelf="flex-start" alignItems="flex-end">
+              {isDev ? <Svg source={devTag(palette.warn)} alt="dev" width={30} height={16} /> : null}
+              {toggle}
             </Box>
-          </Box>
-        ) : (
-          band
-        )
-      if (!isDev) return body
+          ) : null}
+        </Box>
+      )
+      const charts = panel
+        ? [
+            { key: 'week', alt: w.charts.week, source: weekChart(panel, palette, w.charts, 'left') },
+            { key: 'hours', alt: w.charts.byHour, source: hourChart(panel, palette, w.charts, new Date(t).getHours(), 'right') },
+            { key: 'mix', alt: w.charts.mix, source: mixChart(panel.mix, palette, w.charts, 'left') },
+            { key: 'projects', alt: w.charts.projects, source: projectChart(panel, palette, w.charts, 'right') },
+          ]
+        : []
+      if (!panel) return toggle || isDev ? head : band
       return (
-        <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" width="100%" gap={1}>
-          {body}
-          <Box key="dev" flexShrink={0} alignSelf="flex-start">
-            <Svg source={devTag(palette.warn)} alt="dev" width={30} height={16} />
+        <Box flexDirection="column" gap={1} width="100%">
+          {head}
+          <Box key="usage-tiles" flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1} alignItems="center">
+            {tiles.map(x => (
+              <Box key={`usage-${x.key}`} flexDirection="row" gap={1} alignItems="center">
+                {x.ring ? <Svg source={ring(x.ring.percent, palette.accent, palette)} alt={x.ring.alt} width={size} height={size} /> : null}
+                <Box flexDirection="column">
+                  <Box flexDirection="row" gap={1}>
+                    <Text weight="semibold" tabular>
+                      {w.usageLead(x.tok)}
+                    </Text>
+                    <Text color={x.usdColor} dimColor={x.usdColor === undefined} tabular>
+                      {x.usd}
+                    </Text>
+                  </Box>
+                  <Text size="footnote" dimColor tabular>
+                    {x.foot}
+                  </Text>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+          {/* Two charts to a row, each half the band wide: with no size given, an image shrinks to its slot. */}
+          <Box key="usage-charts" flexDirection="row" flexWrap="wrap" rowGap={1} width="100%">
+            {charts.map(c => (
+              <Box key={`chart-${c.key}`} width="50%">
+                <Svg source={c.source} alt={w.chartAlt(c.alt)} isInteractive />
+              </Box>
+            ))}
           </Box>
         </Box>
       )
@@ -1251,28 +1394,47 @@ export const register: Register = on => {
       const head = g.percent === undefined ? `○ –` : `${glyph(g.percent)} ${Math.round(g.percent)}%`
       const pace =
         show.pace && g.elapsed !== undefined && g.percent !== undefined ? (g.percent > g.elapsed ? ' ▲' : ' ▽') : ''
-      const below = isTwoLine ? secondLine(g) : undefined
+      const below = isMinimal ? undefined : secondLine(g)
       return `${head}${pace} ${g.label}${below ? ` ${below.text}` : ''}`
     })
     const cardText = cards.map(c =>
-      (isTwoLine ? c : c.slice(0, 1)).map(f => (f.label && !isMinimal ? `${f.text} ${f.label}` : f.text)).join(' · '),
+      (isMinimal ? c.slice(0, 1) : c).map(f => (f.label && !isMinimal ? `${f.text} ${f.label}` : f.text)).join(' · '),
     )
-    const usageText = usageLead ? [[usageLead, isMinimal ? undefined : usageRest].filter(Boolean).join(' ')] : []
     const line = (
       <Box flexDirection="row" gap={2}>
         <Box flexGrow={1} flexShrink={1}>
-          <Text dimColor>{[...gaugeText, ...cardText, ...usageText].join('   ')}</Text>
+          <Text dimColor>{[...gaugeText, ...cardText].join('   ')}</Text>
         </Box>
-        {toggleButton}
+        {toggle}
         {isDev ? <Text color={palette.warn}>dev</Text> : null}
       </Box>
     )
-    if (usageDetail.length === 0) return line
+    if (!panel) return line
+    // Opened in the terminal: the tiles as one line, then each chart as a row of block glyphs.
+    const m = panel.mix
+    const kinds = [m.read, m.write, m.input, m.output]
+    const allKinds = kinds.reduce((n, k) => n + k, 0)
+    const rows = [
+      tiles.map(x => `${x.tok} ${x.usd} ${x.foot}`).join('   '),
+      w.termWeek(sparkline(panel.days.map(d => d.tokens)), tokOf(panel.week), usdOf(panel.week), avgDay),
+      w.termHour(sparkline(panel.hours.slice(0, new Date(t).getHours() + 1)), tokOf(panel.hour)),
+      w.termMix(
+        shareBar(kinds, 24),
+        hitOf(m),
+        allKinds > 0 ? Math.round((m.output / allKinds) * 100) : 0,
+        savedToday,
+      ) +
+        m.models
+          .slice(0, 3)
+          .map(x => ` · ${modelName(x.id)} ${allKinds > 0 ? Math.round((x.tokens / allKinds) * 100) : 0}% ${money(x.usd)}`)
+          .join(''),
+      w.termTop(panel.projects.map(x => `${x.isThis ? '▸' : ''}${x.name} ${tokens(x.tokens)} ${money(x.usd)}`).join(' · ')),
+    ]
     return (
       <Box flexDirection="column">
         {line}
-        {usageDetail.map((text, i) => (
-          <Text key={`usage-detail-${i}`} dimColor>
+        {rows.map((text, i) => (
+          <Text key={`usage-row-${i}`} dimColor>
             {`  ${text}`}
           </Text>
         ))}
